@@ -40,10 +40,14 @@ export function useRealizedPnl(): {
   realizedPnlSol: number;
   realizedPnlPct: number;
   closedCount: number;
+  winrate: number;
 } {
   const history = usePositionHistory();
   const realizedPnlSol = history.reduce((acc, p) => acc + (p.pnlSol ?? 0), 0);
   const totalSize = history.reduce((acc, p) => acc + (p.sizeSol ?? 0), 0);
   const realizedPnlPct = totalSize > 0 ? (realizedPnlSol / totalSize) * 100 : 0;
-  return { realizedPnlSol, realizedPnlPct, closedCount: history.length };
+  const closedCount = history.length;
+  const wins = history.filter((p) => (p.pnlSol ?? 0) > 0).length;
+  const winrate = closedCount > 0 ? (wins / closedCount) * 100 : 0;
+  return { realizedPnlSol, realizedPnlPct, closedCount, winrate };
 }

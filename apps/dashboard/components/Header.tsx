@@ -27,7 +27,7 @@ function StatusGlyph({ state }: { state: string }) {
 
 export function Header() {
   const { mode, status, solBalance } = useUI();
-  const { realizedPnlSol, realizedPnlPct } = useRealizedPnl();
+  const { realizedPnlSol, realizedPnlPct, winrate } = useRealizedPnl();
   const [now, setNow] = useState<string>("--:--:--");
   useEffect(() => {
     const id = window.setInterval(() => setNow(fmtTime(Date.now())), 1000);
@@ -86,6 +86,14 @@ export function Header() {
         >
           {up ? "+" : ""}
           {fmtSol(realizedPnlSol)} SOL · {fmtPct(realizedPnlPct)}
+        </span>
+        <span
+          className={cn(
+            "text-[10px] uppercase tracking-[0.14em] tabular-nums ml-2",
+            winrate >= 50 ? "text-[var(--profit)]" : "text-[var(--loss)]",
+          )}
+        >
+          WR {winrate.toFixed(0)}%
         </span>
       </div>
 
