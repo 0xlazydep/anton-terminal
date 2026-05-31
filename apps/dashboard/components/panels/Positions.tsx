@@ -21,7 +21,7 @@ import {
 } from "@/lib/utils";
 
 export function Positions() {
-  const { positions, totalPnlSol, totalPnlPct } = usePositions();
+  const { positions, totalPnlSol, totalPnlPct, totalSizeSol } = usePositions();
   const history = usePositionHistory();
   const { realizedPnlSol, realizedPnlPct } = useRealizedPnl();
   const [tab, setTab] = useState("active");
@@ -63,6 +63,12 @@ export function Positions() {
               {pnlUp ? "+" : ""}
               {fmtSol(pnlSol)} SOL · {fmtPct(pnlPct)}
             </span>
+            {showActive && (
+              <>
+                <span className="label-mono ml-4">DEPLOYED</span>
+                <span className="text-xs font-semibold">{fmtSol(totalSizeSol)} SOL</span>
+              </>
+            )}
           </div>
         </div>
 

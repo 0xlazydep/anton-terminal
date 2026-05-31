@@ -13,6 +13,7 @@ export function usePositions(): {
   positions: MockPosition[];
   totalPnlSol: number;
   totalPnlPct: number;
+  totalSizeSol: number;
 } {
   const { data } = useQuery<MockPosition[]>({
     queryKey: ["positions"],
@@ -20,10 +21,10 @@ export function usePositions(): {
     queryFn: async () => [],
   });
   const positions = data ?? [];
+  const totalSizeSol = positions.reduce((acc, p) => acc + (p.sizeSol ?? 0), 0);
   const totalPnlSol = positions.reduce((acc, p) => acc + (p.pnlSol ?? 0), 0);
-  const totalSize = positions.reduce((acc, p) => acc + (p.sizeSol ?? 0), 0);
-  const totalPnlPct = totalSize > 0 ? (totalPnlSol / totalSize) * 100 : 0;
-  return { positions, totalPnlSol, totalPnlPct };
+  const totalPnlPct = totalSizeSol > 0 ? (totalPnlSol / totalSizeSol) * 100 : 0;
+  return { positions, totalPnlSol, totalPnlPct, totalSizeSol };
 }
 
 export function usePositionHistory(): ClosedPosition[] {
