@@ -82,6 +82,16 @@ function status(bus: EventBus, state: AgentState): void {
 const MAX_BALANCE_POINTS = 240;
 const balanceHistory: BalancePointSnapshot[] = [];
 
+async function fetchWalletBalance(): Promise<void> {
+  if (!env.SOLANA_PRIVATE_KEY || !env.SOLANA_RPC_URL) return;
+  const wallet = loadHotWallet(env.SOLANA_PRIVATE_KEY);
+  const connection = createConnection(env.SOLANA_RPC_URL);
+  const lamports = await connection.getBalance(wallet.publicKey);
+  const sol = lamports / LAMPORTS_PER_SOL;
+  STARTING_SOL = sol;
+  log(`wallet balance from chain: ${sol.toFixed(4)} SOL (${wallet.publicKey.toBase58().slice(0, 8)}...)`);
+}
+
 function snapshot(bus: EventBus, book: PositionBook, db?: Database): void {
   const totalPnlSol = book.totalPnlSol();
   const solBalance = STARTING_SOL + totalPnlSol;
@@ -280,16 +290,7 @@ async function bootstrap(): Promise<void> {
   }
 
   if (config.mode === "live" && env.SOLANA_PRIVATE_KEY && env.SOLANA_RPC_URL) {
-    try {
-      const wallet = loadHotWallet(env.SOLANA_PRIVATE_KEY);
-      const connection = createConnection(env.SOLANA_RPC_URL);
-      const lamports = await connection.getBalance(wallet.publicKey);
-      const sol = lamports / LAMPORTS_PER_SOL;
-      STARTING_SOL = sol;
-      log(`wallet balance from chain: ${sol.toFixed(4)} SOL (${wallet.publicKey.toBase58().slice(0, 8)}...)`);
-    } catch (err) {
-      log(`wallet balance fetch failed, using default: ${String(err).slice(0, 80)}`);
-    }
+    await fetchWalletBalance();
   }
 
   let server: RealtimeServerHandle | undefined;
@@ -302,6 +303,9 @@ async function bootstrap(): Promise<void> {
         onSetMode: async (e) => {
           config.mode = e.mode;
           log(`control set_mode → ${e.mode}`);
+          if (e.mode === "live" && STARTING_SOL <= 10 && env.SOLANA_PRIVATE_KEY && env.SOLANA_RPC_URL) {
+            await fetchWalletBalance();
+          }
           if (db) {
             await book.loadFromDb(e.mode);
             log(`reloaded positions for mode ${e.mode}: ${book.count} open`);
