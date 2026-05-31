@@ -32,6 +32,7 @@ import {
 import { fetchCandidates } from "@anton/ingestion";
 import { screenCandidate } from "@anton/screening";
 import { decide, DeepSeekClient } from "@anton/agent";
+import { loadHotWallet, createConnection, LAMPORTS_PER_SOL } from "@anton/solana";
 import type {
   AgentState,
   BalancePointSnapshot,
@@ -61,7 +62,7 @@ const useRedis = REDIS_URL.length > 0 && REDIS_URL !== "redis://localhost:6379";
 const DATABASE_URL = env.DATABASE_URL?.trim() ?? "";
 const REALTIME_PORT = Number(process.env.REALTIME_PORT ?? 4000);
 const CYCLE_MS = Number(process.env.ANTON_CYCLE_MS ?? 12_000);
-const STARTING_SOL = Number(process.env.STARTING_SOL ?? 10);
+let STARTING_SOL = Number(process.env.STARTING_SOL ?? 10);
 const startedAt = Date.now();
 
 function log(msg: string): void {
@@ -275,6 +276,19 @@ async function bootstrap(): Promise<void> {
       log(`restored ${balanceHistory.length} balance point(s) from postgres`);
     } catch (err) {
       log(`balance restore failed: ${String(err).slice(0, 80)}`);
+    }
+  }
+
+  if (config.mode === "live" && env.SOLANA_PRIVATE_KEY && env.SOLANA_RPC_URL) {
+    try {
+      const wallet = loadHotWallet(env.SOLANA_PRIVATE_KEY);
+      const connection = createConnection(env.SOLANA_RPC_URL);
+      const lamports = await connection.getBalance(wallet.publicKey);
+      const sol = lamports / LAMPORTS_PER_SOL;
+      STARTING_SOL = sol;
+      log(`wallet balance from chain: ${sol.toFixed(4)} SOL (${wallet.publicKey.toBase58().slice(0, 8)}...)`);
+    } catch (err) {
+      log(`wallet balance fetch failed, using default: ${String(err).slice(0, 80)}`);
     }
   }
 

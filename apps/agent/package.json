@@ -18,6 +18,7 @@
     "@anton/realtime": "workspace:*",
     "@anton/ingestion": "workspace:*",
     "@anton/screening": "workspace:*",
+    "@anton/solana": "workspace:*",
     "@anton/agent": "workspace:*"
   },
   "devDependencies": {
