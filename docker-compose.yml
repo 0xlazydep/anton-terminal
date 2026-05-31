@@ -1,0 +1,43 @@
+services:
+  db:
+    image: timescale/timescaledb-ha:pg16
+    container_name: anton-db
+    environment:
+      POSTGRES_USER: anton
+      POSTGRES_PASSWORD: anton
+      POSTGRES_DB: anton
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/home/postgres/pgdata/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U anton"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: anton-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  bullboard:
+    image: deadly0/bull-board:latest
+    container_name: anton-bullboard
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports:
+      - "3001:3000"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata: {}

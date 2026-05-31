@@ -1,0 +1,231 @@
+@import "tailwindcss";
+
+/* ─────────────────────────────────────────────────────────────────────
+   ANTON TERMINAL — Design Tokens
+   Cyberpunk · Brutalism · Minimal · Pure B&W (color only for PnL)
+   Zero border radius everywhere. JetBrains Mono. OKLCH.
+   ───────────────────────────────────────────────────────────────────── */
+
+@theme inline {
+  --font-sans: var(--font-jetbrains-mono), "Geist Mono", "IBM Plex Mono", monospace;
+  --font-mono: var(--font-jetbrains-mono), "Geist Mono", "IBM Plex Mono", monospace;
+
+  /* ZERO RADIUS — brutalist edges everywhere */
+  --radius: 0rem;
+  --radius-xs: 0rem;
+  --radius-sm: 0rem;
+  --radius-md: 0rem;
+  --radius-lg: 0rem;
+  --radius-xl: 0rem;
+  --radius-2xl: 0rem;
+  --radius-3xl: 0rem;
+  --radius-full: 0rem;
+
+  /* Surface tokens (consumed via bg-background etc.) */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--card);
+  --color-popover-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--card);
+  --color-secondary-foreground: var(--foreground);
+  --color-muted: var(--card);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--card);
+  --color-accent-foreground: var(--foreground);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--ring);
+  --color-profit: var(--profit);
+  --color-loss: var(--loss);
+  --color-destructive: var(--loss);
+}
+
+:root {
+  /* light: white bg, black ink */
+  --background: oklch(1 0 0);
+  --foreground: oklch(0 0 0);
+  --card: oklch(0.97 0 0);
+  --primary: oklch(0 0 0);
+  --primary-foreground: oklch(1 0 0);
+  --muted-foreground: oklch(0.4 0 0);
+  --border: oklch(0 0 0 / 18%);
+  --ring: oklch(0 0 0);
+  --profit: oklch(0.62 0.19 150);
+  --loss: oklch(0.55 0.22 25);
+  --scanline-opacity: 0.025;
+  --grid-line: oklch(0 0 0 / 6%);
+}
+
+.dark {
+  /* dark: near-black bg, white ink */
+  --background: oklch(0.07 0 0);
+  --foreground: oklch(0.98 0 0);
+  --card: oklch(0.1 0 0);
+  --primary: oklch(1 0 0);
+  --primary-foreground: oklch(0 0 0);
+  --muted-foreground: oklch(0.6 0 0);
+  --border: oklch(1 0 0 / 14%);
+  --ring: oklch(1 0 0);
+  --profit: oklch(0.82 0.2 150);
+  --loss: oklch(0.7 0.22 25);
+  --scanline-opacity: 0.035;
+  --grid-line: oklch(1 0 0 / 5%);
+}
+
+* {
+  border-color: var(--border);
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1, "ss01" 1, "cv11" 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: geometricPrecision;
+}
+
+/* Tabular numerals for every numeric span */
+.tabular,
+[data-tabular="true"],
+input[type="number"],
+table {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* Caret + selection on brand */
+::selection {
+  background: var(--foreground);
+  color: var(--background);
+}
+
+/* Native scrollbar — minimal, monochrome */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: oklch(1 0 0 / 18%);
+}
+:root *::-webkit-scrollbar-thumb {
+  background: oklch(0 0 0 / 22%);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--foreground);
+}
+
+/* ───────────────────────── Brutalist Utilities ──────────────────── */
+
+/* Subtle CRT scanline overlay — opt-in via .crt or wrap a panel */
+.scanlines {
+  position: relative;
+}
+.scanlines::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 2px,
+    currentColor 2px,
+    currentColor 3px
+  );
+  opacity: var(--scanline-opacity, 0.03);
+  mix-blend-mode: overlay;
+  z-index: 50;
+}
+
+/* Animated blinking caret for terminal panels */
+.caret::after {
+  content: "▮";
+  display: inline-block;
+  margin-left: 0.15ch;
+  animation: caret-blink 1.05s steps(2, start) infinite;
+}
+@keyframes caret-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* Faint grid background for panels */
+.brutal-grid {
+  background-image:
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* Uppercase, letter-spaced label */
+.label-mono {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+/* PnL utility classes (the ONLY color) */
+.text-profit {
+  color: var(--profit);
+}
+.text-loss {
+  color: var(--loss);
+}
+.bg-profit {
+  background-color: var(--profit);
+}
+.bg-loss {
+  background-color: var(--loss);
+}
+
+/* Status dot pulse */
+.dot-pulse {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  background: currentColor;
+  position: relative;
+}
+.dot-pulse::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 1px solid currentColor;
+  opacity: 0.5;
+  animation: dot-ring 1.4s ease-out infinite;
+}
+@keyframes dot-ring {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+/* Smooth focus rings, brutalist style (square) */
+:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: 1px;
+}
+
+/* Disable rounded corners universally just in case */
+* {
+  border-radius: 0 !important;
+}

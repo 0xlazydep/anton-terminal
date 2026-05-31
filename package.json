@@ -1,0 +1,32 @@
+{
+  "name": "anton-terminal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Autonomous Solana meme coin trading agent. DeepSeek brain, on-chain smart-money learning, persistent memory, cyberpunk/brutalist dashboard.",
+  "type": "module",
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "dash": "pnpm --filter @anton/dashboard dev",
+    "realtime": "pnpm --filter @anton/realtime dev",
+    "dash:live": "concurrently -k -n REALTIME,DASH -c magenta,cyan \"pnpm realtime\" \"cross-env NEXT_PUBLIC_MOCK=0 pnpm --filter @anton/dashboard dev\"",
+    "dash:agent": "concurrently -k -n AGENT,DASH -c green,cyan \"pnpm --filter @anton/agent-app dev\" \"cross-env NEXT_PUBLIC_MOCK=0 pnpm --filter @anton/dashboard dev\"",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "clean": "turbo run clean",
+    "db:generate": "pnpm --filter @anton/data db:generate",
+    "db:migrate": "pnpm --filter @anton/data db:migrate"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "concurrently": "^10.0.0",
+    "cross-env": "^10.1.0",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2"
+  }
+}

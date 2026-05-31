@@ -1,0 +1,28 @@
+{
+  "name": "@anton/agent-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node --import tsx --watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@anton/shared-types": "workspace:*",
+    "@anton/config": "workspace:*",
+    "@anton/data": "workspace:*",
+    "@anton/realtime": "workspace:*",
+    "@anton/ingestion": "workspace:*",
+    "@anton/screening": "workspace:*",
+    "@anton/agent": "workspace:*"
+  },
+  "devDependencies": {
+    "rimraf": "^6.0.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
