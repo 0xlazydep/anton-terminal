@@ -389,7 +389,7 @@ async function bootstrap(): Promise<void> {
       }
       snapshot(bus, book, db);
       cycleCount += 1;
-      if (cycleCount % 5 === 0 && config.mode === "live") {
+      if (config.mode === "live") {
         fetchWalletBalance().catch((err) => log(`balance refresh: ${String(err).slice(0, 80)}`));
       }
       await new Promise((r) => setTimeout(r, CYCLE_MS));
