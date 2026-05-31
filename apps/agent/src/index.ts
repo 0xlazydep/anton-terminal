@@ -365,7 +365,7 @@ async function bootstrap(): Promise<void> {
   const POLL_MS = Number(process.env.ANTON_POLL_MS ?? 3000);
   let polling = false;
   const tickTimer = setInterval(() => {
-    if (polling) return; // skip overlap: a slow fetch must not stack polls
+    if (polling) return;
     polling = true;
     void book
       .poll()
@@ -375,8 +375,13 @@ async function bootstrap(): Promise<void> {
       });
   }, POLL_MS);
 
+  const balTimer = setInterval(() => {
+    if (config.mode === "live" && env.SOLANA_RPC_URL) {
+      fetchWalletBalance().catch(() => {});
+    }
+  }, 3000);
+
   let running = true;
-  let cycleCount = 0;
   const loop = async (): Promise<void> => {
     await new Promise((r) => setTimeout(r, 500));
     log("agent loop starting (500ms startup delay)");
@@ -388,10 +393,6 @@ async function bootstrap(): Promise<void> {
         reason(bus, `Cycle error: ${String(err).slice(0, 80)}`);
       }
       snapshot(bus, book, db);
-      cycleCount += 1;
-      if (config.mode === "live") {
-        fetchWalletBalance().catch((err) => log(`balance refresh: ${String(err).slice(0, 80)}`));
-      }
       await new Promise((r) => setTimeout(r, CYCLE_MS));
     }
   };
@@ -402,6 +403,7 @@ async function bootstrap(): Promise<void> {
     log(`${signal} received, shutting down`);
     running = false;
     clearInterval(tickTimer);
+    clearInterval(balTimer);
     server?.close();
     void bus.close();
     void dbClient?.end();
