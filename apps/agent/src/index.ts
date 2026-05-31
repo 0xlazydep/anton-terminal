@@ -284,6 +284,21 @@ async function bootstrap(): Promise<void> {
       port: REALTIME_PORT,
       busLabel: "in-memory (embedded)",
       getSnapshot: () => buildStateSnapshot(book),
+      controls: {
+        onSetMode: (e) => {
+          config.mode = e.mode;
+          log(`control set_mode → ${e.mode}`);
+        },
+        onSetSpendLimits: (e) => {
+          config.minSpendSol = e.minSol;
+          config.maxSpendSol = e.maxSol;
+          log(`control set_spend_limits → ${e.minSol}..${e.maxSol} SOL`);
+        },
+        onEmergencyStop: () => {
+          config.mode = "dry-run";
+          log("control emergency_stop → forced dry-run");
+        },
+      },
     });
     log(`embedded realtime server → http://localhost:${REALTIME_PORT}`);
   } else {
