@@ -62,6 +62,7 @@ export interface PositionBookDeps {
   db?: Database;
   onError?: (msg: string) => void;
   swapSolForToken?: (tokenMint: string, solAmount: number) => Promise<{ txSignature: string }>;
+  swapTokenForSol?: (tokenMint: string, solAmount: number) => Promise<{ txSignature: string }>;
 }
 
 export class PositionBook {
@@ -71,6 +72,7 @@ export class PositionBook {
   private readonly db?: Database;
   private readonly onError: (msg: string) => void;
   private readonly swapSolForToken?: (tokenMint: string, solAmount: number) => Promise<{ txSignature: string }>;
+  private readonly swapTokenForSol?: (tokenMint: string, solAmount: number) => Promise<{ txSignature: string }>;
 
   constructor(
     private readonly bus: EventBus,
@@ -80,6 +82,7 @@ export class PositionBook {
     this.db = deps.db;
     this.onError = deps.onError ?? (() => {});
     this.swapSolForToken = deps.swapSolForToken;
+    this.swapTokenForSol = deps.swapTokenForSol;
   }
 
   private persist(op: Promise<void>): void {
@@ -317,7 +320,16 @@ export class PositionBook {
     return 0;
   }
 
-  private close(pos: OpenPosition, pnlPct: number, reason: string): void {
+  private async close(pos: OpenPosition, pnlPct: number, reason: string): Promise<void> {
+    if (pos.mode === "live" && this.swapTokenForSol) {
+      try {
+        const result = await this.swapTokenForSol(pos.mint, pos.sizeSol);
+        this.onError(`swap SELL ${pos.symbol ?? pos.mint.slice(0, 8)} → ${result.txSignature.slice(0, 16)}...`);
+      } catch (err) {
+        this.onError(`swap sell failed: ${String(err).slice(0, 120)}`);
+      }
+    }
+
     this.positions.delete(pos.id);
     const pnlSol = pos.sizeSol * (pnlPct / 100);
     this.realizedPnlSol += pnlSol;
