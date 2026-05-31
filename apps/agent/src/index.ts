@@ -292,18 +292,7 @@ async function bootstrap(): Promise<void> {
               amountLamports: lamports,
               slippageBps,
             });
-            log(`swap BUY ${tokenMint.slice(0, 8)}... ${solAmount} SOL → ${result.txSignature.slice(0, 16)}...`);
-            return { txSignature: result.txSignature };
-          }
-        : undefined,
-      swapTokenForSol: env.SOLANA_PRIVATE_KEY && env.SOLANA_RPC_URL
-        ? async (tokenMint: string, solAmount: number) => {
-            const wallet = loadHotWallet(env.SOLANA_PRIVATE_KEY!);
-            const connection = createConnection(env.SOLANA_RPC_URL!);
-            const lamports = Math.floor(solAmount * LAMPORTS_PER_SOL);
-            const slippageBps = Number(process.env.JUPITER_SLIPPAGE_BPS ?? 2500);
-            const result = await swapSell(connection, wallet, tokenMint, lamports, slippageBps);
-            log(`swap SELL ${tokenMint.slice(0, 8)}... → ${result.txSignature.slice(0, 16)}...`);
+            log(`swap BUY ${tokenMint.slice(0, 8)}... ${solAmount} SOL → ${result.txSignature.slice(0, 16)}... | out: ${result.outputAmount}`);
             return { txSignature: result.txSignature };
           }
         : undefined,
