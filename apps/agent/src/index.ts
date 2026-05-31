@@ -33,6 +33,8 @@ import { fetchCandidates } from "@anton/ingestion";
 import { screenCandidate } from "@anton/screening";
 import { decide, DeepSeekClient } from "@anton/agent";
 import { loadHotWallet, createConnection, LAMPORTS_PER_SOL } from "@anton/solana";
+import { swapBuy } from "@anton/solana";
+import { SOL_MINT } from "@anton/solana";
 import type {
   AgentState,
   BalancePointSnapshot,
@@ -209,7 +211,7 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
         reason(bus, `At max positions (${config.maxConcurrentPositions}) · skipping ${decision.symbol ?? ""}`);
       } else {
         status(bus, "entering");
-        const opened = book.open(
+        const opened = await book.open(
           decision,
           r.candidate.market.priceUsd ?? 0,
           config.mode,
@@ -270,7 +272,28 @@ async function bootstrap(): Promise<void> {
       maxConcurrentPositions: config.maxConcurrentPositions,
       preventDuplicateMint: config.preventDuplicateMint,
     },
-    { db, onError: log },
+    {
+      db,
+      onError: log,
+      swapSolForToken: env.SOLANA_PRIVATE_KEY && env.SOLANA_RPC_URL
+        ? async (tokenMint: string, solAmount: number) => {
+            const wallet = loadHotWallet(env.SOLANA_PRIVATE_KEY!);
+            const connection = createConnection(env.SOLANA_RPC_URL!);
+            const lamports = Math.floor(solAmount * LAMPORTS_PER_SOL);
+            const slippageBps = Number(process.env.JUPITER_SLIPPAGE_BPS ?? 2500);
+            const result = await swapBuy({
+              connection,
+              wallet,
+              inputMint: SOL_MINT,
+              outputMint: tokenMint,
+              amountLamports: lamports,
+              slippageBps,
+            });
+            log(`swap BUY ${tokenMint.slice(0, 8)}... ${solAmount} SOL → ${result.txSignature.slice(0, 16)}...`);
+            return { txSignature: result.txSignature };
+          }
+        : undefined,
+    },
   );
 
   if (db) {

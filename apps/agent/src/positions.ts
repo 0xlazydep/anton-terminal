@@ -61,6 +61,7 @@ export interface PositionBookLimits {
 export interface PositionBookDeps {
   db?: Database;
   onError?: (msg: string) => void;
+  swapSolForToken?: (tokenMint: string, solAmount: number) => Promise<{ txSignature: string }>;
 }
 
 export class PositionBook {
@@ -69,6 +70,7 @@ export class PositionBook {
   private readonly history: ClosedPositionSnapshot[] = [];
   private readonly db?: Database;
   private readonly onError: (msg: string) => void;
+  private readonly swapSolForToken?: (tokenMint: string, solAmount: number) => Promise<{ txSignature: string }>;
 
   constructor(
     private readonly bus: EventBus,
@@ -77,6 +79,7 @@ export class PositionBook {
   ) {
     this.db = deps.db;
     this.onError = deps.onError ?? (() => {});
+    this.swapSolForToken = deps.swapSolForToken;
   }
 
   private persist(op: Promise<void>): void {
@@ -174,17 +177,30 @@ export class PositionBook {
     return false;
   }
 
-  open(
+  async open(
     decision: TradeDecision,
     entryPriceUsd: number,
     mode: ExecutionMode,
     entryMarketCapUsd?: number,
-  ): boolean {
+  ): Promise<boolean> {
     if (decision.action !== "BUY" || !decision.size_sol) return false;
     if (this.atCapacity()) return false;
     if (this.limits.preventDuplicateMint && this.hasMint(decision.token)) {
       return false;
     }
+
+    let txSig: string | undefined;
+    if (mode === "live" && this.swapSolForToken) {
+      const sizeSol = decision.size_sol;
+      try {
+        const result = await this.swapSolForToken(decision.token, sizeSol);
+        txSig = result.txSignature;
+      } catch (err) {
+        this.onError(`swap failed: ${String(err).slice(0, 120)}`);
+        return false;
+      }
+    }
+
     const id = randomUUID();
     const pos: OpenPosition = {
       id,
@@ -226,6 +242,7 @@ export class PositionBook {
       entryPriceUsd,
       entryMarketCapUsd,
       sizeSol: pos.sizeSol,
+      txSig,
       mode,
     };
     publishPositionOpened(this.bus, opened);
