@@ -1,9 +1,8 @@
-import { Keypair, Connection } from "@solana/web3.js";
-import { decodeInstruction, buildV0Transaction, signTx } from "./tx.js";
-import { SOL_MINT } from "./rpc.js";
+import { Keypair, Connection, VersionedTransaction } from "@solana/web3.js";
+import { SOL_MINT, LAMPORTS_PER_SOL } from "./rpc.js";
 
-const JUPITER_QUOTE = "https://quote-api.jup.ag/v6/quote";
-const JUPITER_SWAP = "https://quote-api.jup.ag/v6/swap";
+const JUPITER_QUOTE = "https://api.jup.ag/swap/v1/quote";
+const JUPITER_SWAP = "https://api.jup.ag/swap/v1/swap";
 
 interface QuoteParams {
   inputMint: string;
@@ -38,19 +37,14 @@ async function jupiterQuote(p: QuoteParams) {
   return res.json() as Promise<{ inAmount: string; outAmount: string }>;
 }
 
-async function jupiterSwap(quoteResponse: unknown) {
+async function jupiterSwap(quoteResponse: unknown, userPubkey: string) {
   const res = await fetch(JUPITER_SWAP, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      quoteResponse,
-      userPublicKey: "",
-      dynamicComputeUnitLimit: true,
-      prioritizationFeeLamports: { autoMultiplier: 2 },
-    }),
+    body: JSON.stringify({ quoteResponse, userPublicKey: userPubkey }),
   });
   if (!res.ok) throw new Error(`Jupiter swap failed: ${res.status}`);
-  return res.json() as Promise<{ setupInstructions: any[]; swapInstruction: any }>;
+  return res.json() as Promise<{ swapTransaction: string }>;
 }
 
 export async function swapBuy(p: SwapParams): Promise<SwapResult> {
@@ -61,24 +55,14 @@ export async function swapBuy(p: SwapParams): Promise<SwapResult> {
     slippageBps: p.slippageBps,
   });
 
-  const swapBody = await jupiterSwap(quote);
-  const allIx = [...(swapBody.setupInstructions ?? []), swapBody.swapInstruction].map(decodeInstruction);
-
-  const tx = await buildV0Transaction({
-    connection: p.connection,
-    payer: p.wallet.publicKey,
-    instructions: allIx,
-    computeUnitLimit: 1_400_000,
-    computeUnitPriceMicroLamports: 5000,
-  });
-
-  signTx(tx, p.wallet);
+  const { swapTransaction } = await jupiterSwap(quote, p.wallet.publicKey.toBase58());
+  const tx = VersionedTransaction.deserialize(Buffer.from(swapTransaction, "base64"));
+  tx.sign([p.wallet]);
 
   const txSig = await p.connection.sendRawTransaction(tx.serialize(), {
     skipPreflight: false,
     maxRetries: 2,
   });
-
   await p.connection.confirmTransaction(txSig, "confirmed");
 
   return { txSignature: txSig, inputAmount: quote.inAmount, outputAmount: quote.outAmount };
