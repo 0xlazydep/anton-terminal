@@ -376,9 +376,8 @@ async function bootstrap(): Promise<void> {
   }, POLL_MS);
 
   let running = true;
+  let cycleCount = 0;
   const loop = async (): Promise<void> => {
-    // Give Socket.IO clients (dashboard) time to connect before the first
-    // cycle so screening + position events are not lost.
     await new Promise((r) => setTimeout(r, 500));
     log("agent loop starting (500ms startup delay)");
     while (running) {
@@ -389,6 +388,10 @@ async function bootstrap(): Promise<void> {
         reason(bus, `Cycle error: ${String(err).slice(0, 80)}`);
       }
       snapshot(bus, book, db);
+      cycleCount += 1;
+      if (cycleCount % 5 === 0 && config.mode === "live") {
+        fetchWalletBalance().catch((err) => log(`balance refresh: ${String(err).slice(0, 80)}`));
+      }
       await new Promise((r) => setTimeout(r, CYCLE_MS));
     }
   };
