@@ -326,7 +326,8 @@ export class PositionBook {
         const result = await this.swapTokenForSol(pos.mint, pos.sizeSol);
         this.onError(`swap SELL ${pos.symbol ?? pos.mint.slice(0, 8)} → ${result.txSignature.slice(0, 16)}...`);
       } catch (err) {
-        this.onError(`swap sell failed: ${String(err).slice(0, 120)}`);
+        this.onError(`swap sell failed: ${String(err).slice(0, 120)} — position kept open`);
+        return;
       }
     }
 

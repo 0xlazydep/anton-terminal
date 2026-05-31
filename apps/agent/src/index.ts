@@ -35,6 +35,7 @@ import { decide, DeepSeekClient } from "@anton/agent";
 import { loadHotWallet, createConnection, LAMPORTS_PER_SOL } from "@anton/solana";
 import { swapBuy } from "@anton/solana";
 import { swapSell } from "@anton/solana";
+import { getTokenBalance } from "@anton/solana";
 import { SOL_MINT } from "@anton/solana";
 import type {
   AgentState,
@@ -292,7 +293,21 @@ async function bootstrap(): Promise<void> {
               amountLamports: lamports,
               slippageBps,
             });
-            log(`swap BUY ${tokenMint.slice(0, 8)}... ${solAmount} SOL → ${result.txSignature.slice(0, 16)}... | out: ${result.outputAmount}`);
+            log(`swap BUY ${tokenMint.slice(0, 8)}... ${solAmount} SOL → ${result.txSignature.slice(0, 16)}...`);
+            return { txSignature: result.txSignature };
+          }
+        : undefined,
+      swapTokenForSol: env.SOLANA_PRIVATE_KEY && env.SOLANA_RPC_URL
+        ? async (tokenMint: string, _solAmount: number) => {
+            const wallet = loadHotWallet(env.SOLANA_PRIVATE_KEY!);
+            const connection = createConnection(env.SOLANA_RPC_URL!);
+            const balance = await getTokenBalance(connection, wallet.publicKey, tokenMint);
+            if (!balance || balance.rawAmount === "0") {
+              throw new Error(`no token balance for ${tokenMint.slice(0, 8)}`);
+            }
+            const slippageBps = Number(process.env.JUPITER_SLIPPAGE_BPS ?? 2500);
+            const result = await swapSell(connection, wallet, tokenMint, balance.rawAmount, slippageBps);
+            log(`swap SELL ${tokenMint.slice(0, 8)}... ${balance.uiAmount} tokens → ${result.txSignature.slice(0, 16)}...`);
             return { txSignature: result.txSignature };
           }
         : undefined,

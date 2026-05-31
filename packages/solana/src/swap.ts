@@ -7,7 +7,7 @@ const JUPITER_SWAP = "https://api.jup.ag/swap/v1/swap";
 interface QuoteParams {
   inputMint: string;
   outputMint: string;
-  amount: number;
+  amount: number | string;
   slippageBps: number;
 }
 
@@ -16,7 +16,7 @@ interface SwapParams {
   wallet: Keypair;
   inputMint: string;
   outputMint: string;
-  amountLamports: number;
+  amountLamports: number | string;
   slippageBps: number;
 }
 
@@ -72,8 +72,15 @@ export async function swapSell(
   connection: Connection,
   wallet: Keypair,
   tokenMint: string,
-  amountLamports: number,
+  rawTokenAmount: string,
   slippageBps: number,
 ): Promise<SwapResult> {
-  return swapBuy({ connection, wallet, inputMint: tokenMint, outputMint: SOL_MINT, amountLamports, slippageBps });
+  return swapBuy({
+    connection,
+    wallet,
+    inputMint: tokenMint,
+    outputMint: SOL_MINT,
+    amountLamports: Number(rawTokenAmount),
+    slippageBps,
+  });
 }

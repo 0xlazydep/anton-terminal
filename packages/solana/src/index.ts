@@ -3,3 +3,4 @@ export * from "./wallet.js";
 export * from "./tx.js";
 export * from "./priority-fee.js";
 export * from "./swap.js";
+export * from "./balance.js";
