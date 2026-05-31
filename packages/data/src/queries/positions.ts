@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { Database } from "../db.js";
 import { positions } from "../schema/trades.js";
 import type { ExecutionMode } from "@anton/shared-types";
@@ -97,11 +97,14 @@ export async function closePosition(
     .where(eq(positions.id, input.id));
 }
 
-export async function listOpenPositions(db: Database): Promise<OpenPositionRow[]> {
+export async function listOpenPositions(
+  db: Database,
+  mode?: string,
+): Promise<OpenPositionRow[]> {
   const rows = await db
     .select()
     .from(positions)
-    .where(eq(positions.status, "OPEN"))
+    .where(mode ? and(eq(positions.status, "OPEN"), eq(positions.mode, mode as any)) : eq(positions.status, "OPEN"))
     .orderBy(desc(positions.openedAt));
   return rows.map(mapOpenRow);
 }
@@ -109,11 +112,12 @@ export async function listOpenPositions(db: Database): Promise<OpenPositionRow[]
 export async function listClosedPositions(
   db: Database,
   limit = 100,
+  mode?: string,
 ): Promise<ClosedPositionRow[]> {
   const rows = await db
     .select()
     .from(positions)
-    .where(eq(positions.status, "CLOSED"))
+    .where(mode ? and(eq(positions.status, "CLOSED"), eq(positions.mode, mode as any)) : eq(positions.status, "CLOSED"))
     .orderBy(desc(positions.closedAt))
     .limit(limit);
   return rows.map((r) => {

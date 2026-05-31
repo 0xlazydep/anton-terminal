@@ -83,9 +83,11 @@ export class PositionBook {
     op.catch((err) => this.onError(`db persist: ${String(err).slice(0, 120)}`));
   }
 
-  async loadFromDb(): Promise<void> {
+  async loadFromDb(mode?: ExecutionMode): Promise<void> {
     if (!this.db) return;
-    const open = await listOpenPositions(this.db);
+    this.positions.clear();
+    this.history.length = 0;
+    const open = await listOpenPositions(this.db, mode);
     for (const r of open) {
       this.positions.set(r.id, {
         id: r.id,
@@ -102,7 +104,7 @@ export class PositionBook {
         openedAt: r.openedAt,
       });
     }
-    const closed = await listClosedPositions(this.db, 100);
+    const closed = await listClosedPositions(this.db, 100, mode);
     for (const r of closed) {
       this.history.push({
         id: r.id,

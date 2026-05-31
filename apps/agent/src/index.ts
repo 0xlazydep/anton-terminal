@@ -265,8 +265,8 @@ async function bootstrap(): Promise<void> {
 
   if (db) {
     try {
-      await book.loadFromDb();
-      log(`restored ${book.count} open position(s) from postgres`);
+      await book.loadFromDb(config.mode);
+      log(`restored ${book.count} open position(s) from postgres (mode: ${config.mode})`);
     } catch (err) {
       log(`postgres restore failed: ${String(err).slice(0, 80)}`);
     }
@@ -299,9 +299,13 @@ async function bootstrap(): Promise<void> {
       busLabel: "in-memory (embedded)",
       getSnapshot: () => buildStateSnapshot(book),
       controls: {
-        onSetMode: (e) => {
+        onSetMode: async (e) => {
           config.mode = e.mode;
           log(`control set_mode → ${e.mode}`);
+          if (db) {
+            await book.loadFromDb(e.mode);
+            log(`reloaded positions for mode ${e.mode}: ${book.count} open`);
+          }
         },
         onSetSpendLimits: (e) => {
           config.minSpendSol = e.minSol;
