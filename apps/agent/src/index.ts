@@ -84,20 +84,19 @@ function status(bus: EventBus, state: AgentState): void {
 
 const MAX_BALANCE_POINTS = 240;
 const balanceHistory: BalancePointSnapshot[] = [];
+let lastWalletBalance = STARTING_SOL;
 
 async function fetchWalletBalance(): Promise<void> {
   if (!env.SOLANA_PRIVATE_KEY || !env.SOLANA_RPC_URL) return;
   const wallet = loadHotWallet(env.SOLANA_PRIVATE_KEY);
   const connection = createConnection(env.SOLANA_RPC_URL);
   const lamports = await connection.getBalance(wallet.publicKey);
-  const sol = lamports / LAMPORTS_PER_SOL;
-  STARTING_SOL = sol;
-  log(`wallet balance from chain: ${sol.toFixed(4)} SOL (${wallet.publicKey.toBase58().slice(0, 8)}...)`);
+  lastWalletBalance = lamports / LAMPORTS_PER_SOL;
 }
 
 function snapshot(bus: EventBus, book: PositionBook, db?: Database): void {
   const totalPnlSol = book.totalPnlSol();
-  const solBalance = STARTING_SOL + totalPnlSol;
+  const solBalance = config.mode === "live" ? lastWalletBalance : STARTING_SOL + totalPnlSol;
   const ts = Date.now();
 
   publishHoldingsSnapshot(bus, {
