@@ -158,15 +158,18 @@ export function Positions() {
                 <TH>SYM</TH>
                 <TH>MINT</TH>
                 <TH className="text-right">SIZE</TH>
+                <TH className="text-right">ENTRY</TH>
+                <TH className="text-right">CLOSE</TH>
                 <TH className="text-right">PnL %</TH>
                 <TH className="text-right">PnL SOL</TH>
-                <TH className="text-right">CLOSE</TH>
+                <TH className="text-right">HOLD</TH>
                 <TH>REASON</TH>
               </TR>
             </THead>
             <TBody>
               {history.map((h, i) => {
                 const up = (h.pnlSol ?? 0) >= 0;
+                const hold = h.closedAt ? Math.floor((h.closedAt - h.openedAt) / 1000) : 0;
                 return (
                   <TR key={`hist-${h.id}-${i}`}>
                     <TD className="font-semibold">{h.symbol ?? "—"}</TD>
@@ -174,21 +177,23 @@ export function Positions() {
                       <MintLink mint={h.mint} />
                     </TD>
                     <TD className="text-right">{fmtSol(h.sizeSol)}</TD>
+                    <TD className="text-right">{fmtUsd(h.entryPriceUsd)}</TD>
+                    <TD className="text-right">{fmtUsd(h.closePriceUsd)}</TD>
                     <TD className={cn("text-right font-semibold", up ? "text-[var(--profit)]" : "text-[var(--loss)]")}>
                       {fmtPct(h.pnlPct)}
                     </TD>
                     <TD className={cn("text-right", up ? "text-[var(--profit)]" : "text-[var(--loss)]")}>
                       {up ? "+" : ""}{fmtSol(h.pnlSol)}
                     </TD>
-                    <TD className="text-right">{fmtUsd(h.closePriceUsd)}</TD>
-                    <TD className="text-[var(--muted-foreground)] text-[10px]">{h.reason ?? "—"}</TD>
+                    <TD className="text-right">{fmtHold(hold)}</TD>
+                    <TD className="text-[var(--muted-foreground)] text-[10px] max-w-[200px] truncate">{h.reason ?? "—"}</TD>
                   </TR>
                 );
               })}
               {history.length === 0 && (
                 <TR>
                   <TD
-                    colSpan={7}
+                    colSpan={9}
                     className="py-6 text-center text-[var(--muted-foreground)] uppercase tracking-[0.16em] text-[10px]"
                   >
                     NO CLOSED POSITIONS YET
