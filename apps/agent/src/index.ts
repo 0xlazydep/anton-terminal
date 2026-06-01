@@ -37,6 +37,7 @@ import { swapBuy } from "@anton/solana";
 import { swapSell } from "@anton/solana";
 import { getTokenBalance } from "@anton/solana";
 import { SOL_MINT } from "@anton/solana";
+import { HeliusPriceFeed } from "@anton/solana";
 import type {
   AgentState,
   BalancePointSnapshot,
@@ -400,6 +401,16 @@ async function bootstrap(): Promise<void> {
     log("postgres: no DATABASE_URL, running in-memory only");
   }
 
+  let priceFeed: HeliusPriceFeed | undefined;
+  if (env.SOLANA_RPC_URL) {
+    try {
+      priceFeed = new HeliusPriceFeed(env.SOLANA_RPC_URL);
+      log("helius ws: real-time price feed active");
+    } catch {
+      log("helius ws: unavailable, falling back to dex screener polling");
+    }
+  }
+
   const book = new PositionBook(
     bus,
     {
@@ -409,6 +420,7 @@ async function bootstrap(): Promise<void> {
     {
       db,
       onError: log,
+      priceFeed,
       swapSolForToken: env.SOLANA_PRIVATE_KEY && env.SOLANA_RPC_URL
         ? async (tokenMint: string, solAmount: number) => {
             const wallet = loadHotWallet(env.SOLANA_PRIVATE_KEY!);
@@ -586,6 +598,7 @@ async function bootstrap(): Promise<void> {
     clearInterval(balTimer);
     clearInterval(reconTimer);
     server?.close();
+    priceFeed?.close();
     void bus.close();
     void dbClient?.end();
     setTimeout(() => process.exit(0), 200);

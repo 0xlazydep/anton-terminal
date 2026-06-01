@@ -12,6 +12,7 @@
 
 import { randomUUID } from "node:crypto";
 import { fetchTokenMarket } from "@anton/ingestion";
+import { HeliusPriceFeed } from "@anton/solana";
 import type { EventBus } from "@anton/realtime";
 import type {
   ClosedPositionSnapshot,
@@ -65,6 +66,7 @@ export interface PositionBookDeps {
   onError?: (msg: string) => void;
   swapSolForToken?: (tokenMint: string, solAmount: number) => Promise<{ txSignature: string }>;
   swapTokenForSol?: (tokenMint: string, solAmount: number) => Promise<{ txSignature: string }>;
+  priceFeed?: HeliusPriceFeed;
 }
 
 export class PositionBook {
@@ -75,6 +77,9 @@ export class PositionBook {
   private readonly onError: (msg: string) => void;
   private readonly swapSolForToken?: (tokenMint: string, solAmount: number) => Promise<{ txSignature: string }>;
   private readonly swapTokenForSol?: (tokenMint: string, solAmount: number) => Promise<{ txSignature: string }>;
+  private readonly priceFeed?: HeliusPriceFeed;
+  private readonly wsSubs = new Map<string, number>();
+  private readonly wsSubMints = new Set<string>();
 
   constructor(
     private readonly bus: EventBus,
@@ -85,6 +90,7 @@ export class PositionBook {
     this.onError = deps.onError ?? (() => {});
     this.swapSolForToken = deps.swapSolForToken;
     this.swapTokenForSol = deps.swapTokenForSol;
+    this.priceFeed = deps.priceFeed;
   }
 
   private persist(op: Promise<void>): void {
@@ -255,6 +261,23 @@ export class PositionBook {
       mode,
     };
     publishPositionOpened(this.bus, opened);
+
+    // Subscribe to real-time price via Helius WebSocket
+    if (this.priceFeed && !this.wsSubMints.has(pos.mint)) {
+      this.wsSubMints.add(pos.mint);
+      const subId = await this.priceFeed.subscribe(pos.mint, (priceUsd, marketCapUsd) => {
+        const p = this.positions.get(id);
+        if (!p) return;
+        if (priceUsd > 0) p.currentPriceUsd = priceUsd;
+        if (marketCapUsd && marketCapUsd > 0) p.currentMarketCapUsd = marketCapUsd;
+
+        const pnlPct = this.pnlPct(p);
+        // Check SL/TP/trailing immediately on real-time price
+        this.checkExitConditions(p, pnlPct);
+      });
+      this.wsSubs.set(pos.mint, subId);
+    }
+
     return true;
   }
 
@@ -268,35 +291,14 @@ export class PositionBook {
     );
   }
 
-  private async refresh(pos: OpenPosition): Promise<void> {
-    let priceUsd: number | undefined;
-    let marketCapUsd: number | undefined;
-    try {
-      const snap = await fetchTokenMarket(pos.mint);
-      priceUsd = snap.priceUsd;
-      marketCapUsd = snap.marketCapUsd;
-    } catch {
-      return; // hold last price: no movement until a fetch succeeds again
-    }
-
-    if (priceUsd !== undefined && priceUsd > 0) pos.currentPriceUsd = priceUsd;
-    if (marketCapUsd !== undefined && marketCapUsd > 0) pos.currentMarketCapUsd = marketCapUsd;
-
-    // Update peak price for trailing stop
-    if (pos.currentPriceUsd > pos.peakPriceUsd) {
-      pos.peakPriceUsd = pos.currentPriceUsd;
-    }
-
-    const pnlPct = this.pnlPct(pos);
+  private checkExitConditions(pos: OpenPosition, pnlPct: number): void {
     const ageSec = (Date.now() - pos.openedAt) / 1000;
 
-    // Time-based stale exit: close positions with no movement after 30 min
     if (ageSec > 1800 && Math.abs(pnlPct) < 2 && pnlPct <= 0.5) {
       this.close(pos, pnlPct, "timeout-stale");
       return;
     }
 
-    // Trailing stop: activate once position reaches 50% of take-profit target
     if (!pos.trailingActivated && pnlPct >= pos.tpPct * 0.5) {
       pos.trailingActivated = true;
     }
@@ -326,6 +328,28 @@ export class PositionBook {
       slPct: pos.slPct,
       tpPct: pos.tpPct,
     });
+  }
+
+  private async refresh(pos: OpenPosition): Promise<void> {
+    let priceUsd: number | undefined;
+    let marketCapUsd: number | undefined;
+    try {
+      const snap = await fetchTokenMarket(pos.mint);
+      priceUsd = snap.priceUsd;
+      marketCapUsd = snap.marketCapUsd;
+    } catch {
+      return;
+    }
+
+    if (priceUsd !== undefined && priceUsd > 0) pos.currentPriceUsd = priceUsd;
+    if (marketCapUsd !== undefined && marketCapUsd > 0) pos.currentMarketCapUsd = marketCapUsd;
+
+    if (pos.currentPriceUsd > pos.peakPriceUsd) {
+      pos.peakPriceUsd = pos.currentPriceUsd;
+    }
+
+    const pnlPct = this.pnlPct(pos);
+    this.checkExitConditions(pos, pnlPct);
   }
 
   /**
@@ -387,6 +411,20 @@ export class PositionBook {
   }
 
   private finalizeClose(pos: OpenPosition, pnlPct: number, reason: string): void {
+    // Unsubscribe from WS if no other positions share this mint
+    let mintStillOpen = false;
+    for (const p of this.positions.values()) {
+      if (p.id !== pos.id && p.mint === pos.mint) { mintStillOpen = true; break; }
+    }
+    if (!mintStillOpen) {
+      const subId = this.wsSubs.get(pos.mint);
+      if (subId !== undefined && this.priceFeed) {
+        this.priceFeed.unsubscribe(subId);
+        this.wsSubs.delete(pos.mint);
+        this.wsSubMints.delete(pos.mint);
+      }
+    }
+
     this.positions.delete(pos.id);
     const pnlSol = pos.sizeSol * (pnlPct / 100);
     this.realizedPnlSol += pnlSol;
