@@ -94,6 +94,7 @@ const MAX_BALANCE_POINTS = 240;
 const balanceHistory: BalancePointSnapshot[] = [];
 let lastWalletBalance = STARTING_SOL;
 const reflectedPositionIds = new Set<string>();
+const recentlyClosedMints = new Map<string, { closedAt: number; wasProfit: boolean }>();
 let db: Database | undefined;
 
 async function fetchWalletBalance(): Promise<void> {
@@ -156,10 +157,17 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
   const { candidates, source } = await fetchCandidates(12);
   reason(bus, `Scanning sources · ${candidates.length} candidates (${source})`, 0.5);
 
-  // Filter out mints already in active positions BEFORE any expensive screening.
-  // PositionBook.open() also guards internally, but skipping early saves
-  // screenCandidate() + decide() calls on tokens we already hold.
-  const fresh = candidates.filter((c) => !book.hasMint(c.mint));
+  // Filter out mints recently closed (5 min cooldown) + already active
+  const COOLDOWN_MS = 300_000;
+  const fresh = candidates.filter((c) => {
+    if (book.hasMint(c.mint)) return false;
+    const closed = recentlyClosedMints.get(c.mint);
+    if (closed) {
+      const cooldown = closed.wasProfit ? 1_800_000 : 300_000; // 30min profit, 5min loss
+      if (Date.now() - closed.closedAt < cooldown) return false;
+    }
+    return true;
+  });
 
   status(bus, "analyzing");
   const screened: Array<{
@@ -365,6 +373,18 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
     for (const closed of history) {
       if (reflectedPositionIds.has(closed.id)) continue;
       reflectedPositionIds.add(closed.id);
+      recentlyClosedMints.set(closed.mint, {
+        closedAt: Date.now(),
+        wasProfit: closed.pnlSol > 0,
+      });
+
+      // Cleanup old cooldown entries periodically
+      if (recentlyClosedMints.size > 200) {
+        const cutoff = Date.now() - 1_800_000;
+        for (const [mint, entry] of recentlyClosedMints) {
+          if (entry.closedAt < cutoff) recentlyClosedMints.delete(mint);
+        }
+      }
 
       const holdSec = closed.closedAt && closed.openedAt
         ? Math.floor((closed.closedAt - closed.openedAt) / 1000)
