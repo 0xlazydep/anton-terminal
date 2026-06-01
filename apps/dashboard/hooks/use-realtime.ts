@@ -36,6 +36,7 @@ export function useRealtime(): void {
   const qc = useQueryClient();
   const setStatus = useUI((s) => s.setStatus);
   const setSolBalance = useUI((s) => s.setSolBalance);
+  const setMode = useUI((s) => s.setMode);
 
   useEffect(() => {
     if (isMockMode()) {
@@ -265,6 +266,7 @@ export function useRealtime(): void {
         ["position-history"],
         evt.history as ClosedPosition[],
       );
+      if (evt.mode) setMode(evt.mode);
     };
 
     socket.on("state_snapshot", onStateSnapshot);

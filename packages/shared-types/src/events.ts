@@ -97,6 +97,7 @@ export interface StateSnapshotEvent {
   history: ClosedPositionSnapshot[];
   balanceHistory: BalancePointSnapshot[];
   startingSol: number;
+  mode?: ExecutionMode;
 }
 
 // ─── Screening events (server → client) ───

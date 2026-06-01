@@ -134,6 +134,7 @@ function buildStateSnapshot(book: PositionBook): StateSnapshotEvent {
     ...base,
     balanceHistory: [...balanceHistory],
     startingSol: STARTING_SOL,
+    mode: config.mode,
   };
 }
 
@@ -477,6 +478,8 @@ async function bootstrap(): Promise<void> {
 
   if (config.mode === "live" && env.SOLANA_PRIVATE_KEY && env.SOLANA_RPC_URL) {
     await fetchWalletBalance();
+    STARTING_SOL = lastWalletBalance;
+    log(`wallet balance: ${STARTING_SOL} SOL (set as equity baseline)`);
   }
 
   let server: RealtimeServerHandle | undefined;
@@ -489,8 +492,9 @@ async function bootstrap(): Promise<void> {
         onSetMode: async (e) => {
           config.mode = e.mode;
           log(`control set_mode → ${e.mode}`);
-          if (e.mode === "live" && STARTING_SOL <= 10 && env.SOLANA_PRIVATE_KEY && env.SOLANA_RPC_URL) {
+          if (e.mode === "live" && env.SOLANA_PRIVATE_KEY && env.SOLANA_RPC_URL) {
             await fetchWalletBalance();
+            STARTING_SOL = lastWalletBalance;
           }
           if (db) {
             await book.loadFromDb(e.mode);
