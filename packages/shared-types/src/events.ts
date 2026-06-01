@@ -111,6 +111,7 @@ export interface ScreeningResultEvent {
   pairAgeSec?: number;
   ts: number;
   source?: TokenSource;
+  llmAction?: "BUY" | "SKIP";
 }
 
 // ─── Reasoning events (SSE) ───

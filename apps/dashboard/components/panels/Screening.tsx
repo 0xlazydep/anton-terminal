@@ -69,6 +69,8 @@ export function Screening() {
   const rows = data ?? [];
   const safe = rows.filter((r) => r.verdict === "SAFE").length;
   const reject = rows.filter((r) => r.verdict === "REJECT").length;
+  const skipped = rows.filter((r) => r.llmAction === "SKIP").length;
+  const bought = rows.filter((r) => r.llmAction === "BUY").length;
 
   return (
     <Card className="h-full">
@@ -83,6 +85,12 @@ export function Screening() {
           </span>
           <span className="label-mono">
             <span className="text-[var(--loss)]">{reject}</span> REJECT
+          </span>
+          <span className="label-mono">
+            <span className="text-[var(--muted-foreground)]">{skipped}</span> SKIP
+          </span>
+          <span className="label-mono">
+            <span className="text-foreground">{bought}</span> BUY
           </span>
         </div>
       </CardHeader>
@@ -143,7 +151,13 @@ export function Screening() {
                     </span>
                   )}
                 </TD>
-                <TD className="text-right">
+                <TD className="text-right flex items-center gap-1 justify-end">
+                  {r.llmAction === "BUY" && (
+                    <Badge variant="profit" className="text-[8px]">▲ BUY</Badge>
+                  )}
+                  {r.llmAction === "SKIP" && (
+                    <Badge variant="outline" className="text-[8px] text-[var(--muted-foreground)]">⨯ SKIP</Badge>
+                  )}
                   <VerdictBadge verdict={r.verdict} />
                 </TD>
               </TR>

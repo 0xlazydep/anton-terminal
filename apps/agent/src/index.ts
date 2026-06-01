@@ -264,6 +264,12 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
       });
     }
 
+    // Update screening row with LLM decision (BUY or SKIP)
+    publishScreening(bus, {
+      ...r.screeningEvt,
+      llmAction: decision.action === "BUY" ? "BUY" : "SKIP",
+    });
+
     if (decision.action === "BUY" && decision.size_sol) {
       if (dailyLossExceeded) {
         reason(bus, `⛔ Daily loss cap ${config.maxDailyLossSol} SOL reached (${realizedToday.toFixed(3)}) · skipping ${decision.symbol ?? ""}`, 0.9);
