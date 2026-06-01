@@ -169,8 +169,16 @@ export function BalanceChart() {
       const points = e.balanceHistory
         .map((p) => ({ time: Math.floor(p.ts / 1000) as Time, value: p.solBalance }))
         .sort((a, b) => (a.time as number) - (b.time as number));
-      if (points.length > 0) {
-        seriesRef.current.setData(points);
+      // Deduplicate by time — lightweight-charts requires strictly ascending
+      const deduped: Array<{ time: Time; value: number }> = [];
+      for (const p of points) {
+        const prev = deduped[deduped.length - 1];
+        if (!prev || (p.time as number) > (prev.time as number)) {
+          deduped.push(p);
+        }
+      }
+      if (deduped.length > 0) {
+        seriesRef.current.setData(deduped);
         const tail = points[points.length - 1]!;
         lastPoint.current = { time: tail.time as number, value: tail.value };
         setLast({ time: tail.time as number, value: tail.value });
