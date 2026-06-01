@@ -529,7 +529,14 @@ async function bootstrap(): Promise<void> {
         },
         onEmergencyStop: () => {
           config.mode = "dry-run";
-          log("control emergency_stop → forced dry-run");
+          log("control emergency_stop → forced dry-run, stopping all live activity");
+          // Close all live positions immediately
+          const snap = book.snapshotState();
+          for (const pos of snap.positions) {
+            if (pos.mode === "live") {
+              book.forceClose(pos.id, pos.pnlPct, "emergency-stop").catch(() => {});
+            }
+          }
         },
       },
     });
