@@ -305,7 +305,9 @@ export class PositionBook {
 
     if (pos.trailingActivated) {
       const drawdownFromPeak = ((pos.currentPriceUsd - pos.peakPriceUsd) / pos.peakPriceUsd) * 100;
-      if (drawdownFromPeak <= -15) {
+      const mc = pos.currentMarketCapUsd ?? pos.entryMarketCapUsd ?? 999_999;
+      const trailPct = mc < 30_000 ? 8 : mc < 100_000 ? 10 : 15;
+      if (drawdownFromPeak <= -trailPct) {
         this.close(pos, pnlPct, "trailing-stop hit");
         return;
       }
