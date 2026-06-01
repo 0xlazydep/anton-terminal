@@ -64,8 +64,8 @@ const config: TradingConfig = parseTradingConfig({
   screeningPreset: "normal",
   minLiquidityUsd: 8000,
   maxConcurrentPositions: Number(process.env.ANTON_MAX_CONCURRENT_POSITIONS ?? 10),
-  minSpendSol: Number(process.env.ANTON_MIN_SPEND_SOL ?? 0.05),
-  maxSpendSol: Number(process.env.ANTON_MAX_SPEND_SOL ?? 0.1),
+  minSpendSol: Number(process.env.ANTON_MIN_SPEND_SOL ?? 0.1),
+  maxSpendSol: Number(process.env.ANTON_MAX_SPEND_SOL ?? 0.15),
 });
 
 const REDIS_URL = env.REDIS_URL?.trim() ?? "";

@@ -3,9 +3,9 @@ import { z } from "zod";
 export const tradingConfigSchema = z.object({
   mode: z.enum(["dry-run", "live"]).default("dry-run"),
 
-  minSpendSol: z.number().min(0.001).default(0.05),
-  maxSpendSol: z.number().min(0.001).default(0.1),
-  defaultSizeSol: z.number().min(0.001).default(0.1),
+  minSpendSol: z.number().min(0.001).default(0.1),
+  maxSpendSol: z.number().min(0.001).default(0.15),
+  defaultSizeSol: z.number().min(0.001).default(0.12),
 
   maxConcurrentPositions: z.number().int().min(1).default(10),
   maxEntriesPerMinute: z.number().int().min(1).default(6),
