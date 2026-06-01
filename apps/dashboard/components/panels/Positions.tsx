@@ -22,6 +22,58 @@ import {
 import { SolIcon } from "@/components/ui/sol-icon";
 import { useBlink } from "@/hooks/use-blink";
 
+function PositionRow({ p, now }: { p: ReturnType<typeof usePositions>["positions"][number]; now: number }) {
+  const up = p.pnlPct >= 0;
+  const hold = Math.floor((now - p.openedAt) / 1000);
+  const pnlBlink = useBlink(p.pnlPct);
+  const pnlClass = pnlBlink === "up" ? "animate-blink-up" : pnlBlink === "down" ? "animate-blink-down" : "";
+
+  return (
+    <TR>
+      <TD className="font-semibold">{p.symbol ?? "—"}</TD>
+      <TD className="text-[var(--muted-foreground)]">
+        <MintLink mint={p.mint} />
+      </TD>
+      <TD className="text-right">{fmtSol(p.sizeSol)}</TD>
+      <TD className="text-right">{fmtUsd(p.entryPriceUsd)}</TD>
+      <TD className="text-right text-[var(--muted-foreground)]">{fmtMc(p.entryMarketCapUsd)}</TD>
+      <TD className="text-right">{fmtUsd(p.currentPriceUsd)}</TD>
+      <TD className="text-right">{fmtMc(p.currentMarketCapUsd)}</TD>
+      <TD
+        className={cn(
+          "text-right font-semibold transition-colors",
+          up ? "text-[var(--profit)]" : "text-[var(--loss)]",
+          pnlClass,
+        )}
+      >
+        {fmtPct(p.pnlPct)}
+      </TD>
+      <TD
+        className={cn(
+          "text-right transition-colors",
+          up ? "text-[var(--profit)]" : "text-[var(--loss)]",
+          pnlClass,
+        )}
+      >
+        {up ? "+" : ""}
+        {fmtSol(p.pnlSol)}
+      </TD>
+      <TD className="text-right text-[var(--muted-foreground)]">
+        -{p.slPct}% / +{p.tpPct}%
+      </TD>
+      <TD className="text-right">{fmtHold(hold)}</TD>
+      <TD className="text-right">
+        <Badge
+          variant={p.mode === "live" ? "solid" : "outline"}
+          className="text-[8px]"
+        >
+          {p.mode === "live" ? "LIVE" : "DRY"}
+        </Badge>
+      </TD>
+    </TR>
+  );
+}
+
 export function Positions() {
   const { positions, totalPnlSol, totalPnlPct, totalSizeSol } = usePositions();
   const history = usePositionHistory();
@@ -93,56 +145,9 @@ export function Positions() {
               </TR>
             </THead>
             <TBody>
-              {positions.map((p) => {
-                const up = p.pnlPct >= 0;
-                const hold = Math.floor((now - p.openedAt) / 1000);
-                const pnlBlink = useBlink(p.pnlPct);
-                const pnlClass = pnlBlink === "up" ? "animate-blink-up" : pnlBlink === "down" ? "animate-blink-down" : "";
-                return (
-                  <TR key={p.id}>
-                    <TD className="font-semibold">{p.symbol ?? "—"}</TD>
-                    <TD className="text-[var(--muted-foreground)]">
-                      <MintLink mint={p.mint} />
-                    </TD>
-                    <TD className="text-right">{fmtSol(p.sizeSol)}</TD>
-                    <TD className="text-right">{fmtUsd(p.entryPriceUsd)}</TD>
-                    <TD className="text-right text-[var(--muted-foreground)]">{fmtMc(p.entryMarketCapUsd)}</TD>
-                    <TD className="text-right">{fmtUsd(p.currentPriceUsd)}</TD>
-                    <TD className="text-right">{fmtMc(p.currentMarketCapUsd)}</TD>
-                    <TD
-                      className={cn(
-                        "text-right font-semibold transition-colors",
-                        up ? "text-[var(--profit)]" : "text-[var(--loss)]",
-                        pnlClass,
-                      )}
-                    >
-                      {fmtPct(p.pnlPct)}
-                    </TD>
-                    <TD
-                      className={cn(
-                        "text-right transition-colors",
-                        up ? "text-[var(--profit)]" : "text-[var(--loss)]",
-                        pnlClass,
-                      )}
-                    >
-                      {up ? "+" : ""}
-                      {fmtSol(p.pnlSol)}
-                    </TD>
-                    <TD className="text-right text-[var(--muted-foreground)]">
-                      -{p.slPct}% / +{p.tpPct}%
-                    </TD>
-                    <TD className="text-right">{fmtHold(hold)}</TD>
-                    <TD className="text-right">
-                      <Badge
-                        variant={p.mode === "live" ? "solid" : "outline"}
-                        className="text-[8px]"
-                      >
-                        {p.mode === "live" ? "LIVE" : "DRY"}
-                      </Badge>
-                    </TD>
-                  </TR>
-                );
-              })}
+              {positions.map((p) => (
+                <PositionRow key={p.id} p={p} now={now} />
+              ))}
               {positions.length === 0 && (
                 <TR>
                   <TD
