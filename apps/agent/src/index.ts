@@ -391,7 +391,20 @@ async function bootstrap(): Promise<void> {
 
   const balTimer = setInterval(() => {
     if (config.mode === "live" && env.SOLANA_RPC_URL) {
-      fetchWalletBalance().catch(() => {});
+      fetchWalletBalance()
+        .then(() => {
+          const totalPnlSol = book.totalPnlSol();
+          const solBalance = lastWalletBalance;
+          const ts = Date.now();
+          publishHoldingsSnapshot(bus, {
+            startingSol: STARTING_SOL,
+            solBalance,
+            totalPnlSol,
+          });
+          balanceHistory.push({ ts, solBalance });
+          if (balanceHistory.length > MAX_BALANCE_POINTS) balanceHistory.shift();
+        })
+        .catch(() => {});
     }
   }, 3000);
 
