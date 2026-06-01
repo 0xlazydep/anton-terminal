@@ -128,14 +128,26 @@ function snapshot(bus: EventBus, book: PositionBook, db?: Database): void {
   }
 }
 
-function buildStateSnapshot(book: PositionBook): StateSnapshotEvent {
+async function buildStateSnapshot(book: PositionBook): Promise<StateSnapshotEvent> {
   const base = book.snapshotState();
-  return {
+  const result: StateSnapshotEvent = {
     ...base,
     balanceHistory: [...balanceHistory],
     startingSol: STARTING_SOL,
     mode: config.mode,
   };
+
+  if (db) {
+    try {
+      const { getRecentLessons, getPatternStats } = await import("@anton/data");
+      result.recentLessons = await getRecentLessons(db, 5);
+      result.patternStats = await getPatternStats(db);
+    } catch {
+      // Non-fatal — return snapshot without learning data
+    }
+  }
+
+  return result;
 }
 
 async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekClient): Promise<void> {

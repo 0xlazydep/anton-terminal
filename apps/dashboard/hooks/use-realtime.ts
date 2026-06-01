@@ -267,6 +267,12 @@ export function useRealtime(): void {
         evt.history as ClosedPosition[],
       );
       if (evt.mode) setMode(evt.mode);
+      if (evt.recentLessons) {
+        qc.setQueryData(["recent-lessons"], evt.recentLessons);
+      }
+      if (evt.patternStats) {
+        qc.setQueryData(["pattern-stats"], evt.patternStats);
+      }
     };
 
     socket.on("state_snapshot", onStateSnapshot);

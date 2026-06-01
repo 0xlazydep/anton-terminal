@@ -98,6 +98,16 @@ export interface StateSnapshotEvent {
   balanceHistory: BalancePointSnapshot[];
   startingSol: number;
   mode?: ExecutionMode;
+  recentLessons?: Array<{ category: string; summary: string; severity: string }>;
+  patternStats?: Array<{
+    category: string;
+    key: string;
+    totalTrades: number;
+    totalWins: number;
+    totalLosses: number;
+    winRate: number | null;
+    avgPnlPct: number;
+  }>;
 }
 
 // ─── Screening events (server → client) ───
