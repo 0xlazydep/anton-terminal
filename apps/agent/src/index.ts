@@ -47,6 +47,7 @@ import type {
   TokenSource,
 } from "@anton/shared-types";
 import { PositionBook } from "./positions.js";
+import { reflectOnClose } from "./learn.js";
 import {
   publishDecision,
   publishHoldingsSnapshot,
@@ -91,6 +92,8 @@ function status(bus: EventBus, state: AgentState): void {
 const MAX_BALANCE_POINTS = 240;
 const balanceHistory: BalancePointSnapshot[] = [];
 let lastWalletBalance = STARTING_SOL;
+const reflectedPositionIds = new Set<string>();
+let db: Database | undefined;
 
 async function fetchWalletBalance(): Promise<void> {
   if (!env.SOLANA_PRIVATE_KEY || !env.SOLANA_RPC_URL) return;
@@ -197,6 +200,27 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
     : Math.max(0, STARTING_SOL + book.totalPnlSol());
   const dailyLossExceeded = realizedToday <= -(config.maxDailyLossSol ?? 2);
 
+  // Fetch learning context: lessons + pattern stats
+  let recentLessons: string[] | undefined;
+  let patternStatsSummary: string | undefined;
+  if (db) {
+    try {
+      const { getRecentLessons, getPatternStats } = await import("@anton/data");
+      const lessons = await getRecentLessons(db, 5);
+      recentLessons = lessons.map((l) => `[${l.severity}] ${l.summary}`);
+
+      const stats = await getPatternStats(db);
+      if (stats.length > 0) {
+        const lines = stats.slice(0, 8).map((s) =>
+          `${s.category}/${s.key}: ${s.totalWins}W/${s.totalLosses}L (${s.winRate ? (s.winRate * 100).toFixed(0) + "%" : "N/A"} WR, avg ${s.avgPnlPct.toFixed(1)}% PnL)`
+        );
+        patternStatsSummary = lines.join("\n");
+      }
+    } catch {
+      // Non-fatal — continue without learning context
+    }
+  }
+
   for (const r of safe) {
     if (decidedMints.has(r.candidate.mint)) continue;
     decidedMints.add(r.candidate.mint);
@@ -219,6 +243,8 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
         openPositions: openForLLM,
         remainingBudgetSol: remainingBudget,
         realizedPnlSol: realizedToday,
+        recentLessons,
+        patternStatsSummary,
       },
       {
         deepseek,
@@ -307,6 +333,37 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
     }
   }
 
+  // Reflect on newly closed positions — learn from every trade
+  if (db && deepseek) {
+    const history = book.snapshotState().history;
+    for (const closed of history) {
+      if (reflectedPositionIds.has(closed.id)) continue;
+      reflectedPositionIds.add(closed.id);
+
+      const holdSec = closed.closedAt && closed.openedAt
+        ? Math.floor((closed.closedAt - closed.openedAt) / 1000)
+        : 0;
+
+      void reflectOnClose(
+        {
+          symbol: closed.symbol,
+          mint: closed.mint,
+          pnlPct: closed.pnlPct,
+          pnlSol: closed.pnlSol,
+          entryPriceUsd: closed.entryPriceUsd,
+          exitPriceUsd: closed.closePriceUsd ?? closed.currentPriceUsd,
+          sizeSol: closed.sizeSol,
+          slPct: closed.slPct,
+          tpPct: closed.tpPct,
+          holdSec,
+          reason: closed.reason ?? "unknown",
+        },
+        deepseek,
+        db,
+      );
+    }
+  }
+
   status(bus, "watching");
 }
 
@@ -320,7 +377,6 @@ async function bootstrap(): Promise<void> {
     ? new DeepSeekClient({ apiKey: env.DEEPSEEK_API_KEY })
     : undefined;
 
-  let db: Database | undefined;
   let dbClient: { end: () => Promise<void> } | undefined;
   if (DATABASE_URL.length > 0) {
     try {

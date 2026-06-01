@@ -9,6 +9,7 @@ import {
   customType,
   pgEnum,
   index,
+  doublePrecision,
 } from "drizzle-orm/pg-core";
 
 const VECTOR_DIM = 1024;
@@ -62,4 +63,16 @@ export const agentIdentity = pgTable("agent_identity", {
 export const userProfile = pgTable("user_profile", {
   userId: text("user_id").primaryKey(),
   data: jsonb("data").notNull(),
+});
+
+export const patternStats = pgTable("pattern_stats", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  category: text("category").notNull(),
+  key: text("key").notNull(),
+  totalTrades: integer("total_trades").notNull().default(0),
+  totalWins: integer("total_wins").notNull().default(0),
+  totalLosses: integer("total_losses").notNull().default(0),
+  totalPnlSol: doublePrecision("total_pnl_sol").notNull().default(0),
+  avgPnlPct: doublePrecision("avg_pnl_pct").notNull().default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
