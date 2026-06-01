@@ -1,6 +1,6 @@
 /** Agent decision & trade types. */
 
-export type TradeAction = "BUY" | "SELL" | "HOLD" | "SKIP" | "SET_SL" | "SET_TP";
+export type TradeAction = "BUY" | "SELL" | "HOLD" | "SKIP" | "SET_SL" | "SET_TP" | "EXIT";
 
 export type ExecutionMode = "dry-run" | "live";
 
@@ -17,6 +17,7 @@ export interface TradeDecision {
   stop_loss_pct?: number | null;
   take_profit_pct?: number | null;
   risk_flags?: string[];
+  exit_position_id?: string;
 }
 
 /** Persisted, enriched decision record. */

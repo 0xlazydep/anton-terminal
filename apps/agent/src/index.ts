@@ -31,7 +31,7 @@ import {
 } from "@anton/data";
 import { fetchCandidates } from "@anton/ingestion";
 import { screenCandidate } from "@anton/screening";
-import { decide, DeepSeekClient } from "@anton/agent";
+import { decide, decideExit, DeepSeekClient, type ReasoningStep } from "@anton/agent";
 import { loadHotWallet, createConnection, LAMPORTS_PER_SOL } from "@anton/solana";
 import { swapBuy } from "@anton/solana";
 import { swapSell } from "@anton/solana";
@@ -43,6 +43,8 @@ import type {
   EnrichedCandidate,
   ScreeningResultEvent,
   StateSnapshotEvent,
+  TokenPhase,
+  TokenSource,
 } from "@anton/shared-types";
 import { PositionBook } from "./positions.js";
 import {
@@ -179,6 +181,22 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
   const safe = screened.filter((s) => s.screeningEvt.verdict === "SAFE").slice(0, 4);
   const decidedMints = new Set<string>();
 
+  // Gather portfolio context for enriched LLM decisions
+  const portfolioSnap = book.snapshotState();
+  const openForLLM = portfolioSnap.positions.map(p => ({
+    symbol: p.symbol,
+    pnlPct: p.pnlPct,
+    sizeSol: p.sizeSol,
+    openedAt: p.openedAt,
+  }));
+  const realizedToday = portfolioSnap.history
+    .filter(h => h.closedAt && (Date.now() - h.closedAt) < 86400_000)
+    .reduce((sum, h) => sum + h.pnlSol, 0);
+  const remainingBudget = config.mode === "live"
+    ? Math.max(0, lastWalletBalance - portfolioSnap.positions.reduce((s, p) => s + p.sizeSol, 0))
+    : Math.max(0, STARTING_SOL + book.totalPnlSol());
+  const dailyLossExceeded = realizedToday <= -(config.maxDailyLossSol ?? 2);
+
   for (const r of safe) {
     if (decidedMints.has(r.candidate.mint)) continue;
     decidedMints.add(r.candidate.mint);
@@ -194,7 +212,14 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
     }
 
     const decision = await decide(
-      { candidate: r.candidate, screening: r.report, config },
+      {
+        candidate: r.candidate,
+        screening: r.report,
+        config,
+        openPositions: openForLLM,
+        remainingBudgetSol: remainingBudget,
+        realizedPnlSol: realizedToday,
+      },
       {
         deepseek,
         onStep: (s) => reason(bus, s.thought, s.confidence),
@@ -211,7 +236,9 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
     });
 
     if (decision.action === "BUY" && decision.size_sol) {
-      if (book.atCapacity()) {
+      if (dailyLossExceeded) {
+        reason(bus, `⛔ Daily loss cap ${config.maxDailyLossSol} SOL reached (${realizedToday.toFixed(3)}) · skipping ${decision.symbol ?? ""}`, 0.9);
+      } else if (book.atCapacity()) {
         reason(bus, `At max positions (${config.maxConcurrentPositions}) · skipping ${decision.symbol ?? ""}`);
       } else {
         status(bus, "entering");
@@ -239,6 +266,44 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
         priceUsd: s.candidate.market.priceUsd ?? 0,
         ts: Date.now(),
       });
+    }
+  }
+
+  // LLM re-evaluation of open positions for early exit signals
+  if (deepseek && portfolioSnap.positions.length > 0) {
+    for (const pos of portfolioSnap.positions) {
+      const posAgeSec = (Date.now() - pos.openedAt) / 1000;
+      if (posAgeSec < (CYCLE_MS / 1000) * 2) continue;
+
+      try {
+        const exitDecision = await decideExit(
+          {
+            symbol: pos.symbol,
+            mint: pos.mint,
+            pnlPct: pos.pnlPct,
+            entryPriceUsd: pos.entryPriceUsd,
+            currentPriceUsd: pos.currentPriceUsd,
+            sizeSol: pos.sizeSol,
+            slPct: pos.slPct,
+            tpPct: pos.tpPct,
+            ageSec: posAgeSec,
+          },
+          { momentum: undefined, priceChange5mPct: undefined, volume5mUsd: undefined },
+          {
+            deepseek,
+            onStep: (s: ReasoningStep) => reason(bus, `[re-eval ${pos.symbol ?? pos.mint.slice(0, 6)}] ${s.thought}`, s.confidence),
+          },
+        );
+
+        if (exitDecision.action === "EXIT") {
+          const closed = await book.exitPosition(pos.id, `llm-exit: ${exitDecision.reason}`);
+          if (closed) {
+            reason(bus, `🔄 LLM exit: ${pos.symbol ?? pos.mint.slice(0, 8)} at ${pos.pnlPct.toFixed(1)}% — ${exitDecision.reason}`, exitDecision.confidence);
+          }
+        }
+      } catch {
+        // Exit evaluation failures are non-fatal — mechanical stops remain active
+      }
     }
   }
 

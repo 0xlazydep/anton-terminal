@@ -51,6 +51,8 @@ interface OpenPosition {
   tpPct: number;
   mode: ExecutionMode;
   openedAt: number;
+  peakPriceUsd: number;
+  trailingActivated: boolean;
 }
 
 export interface PositionBookLimits {
@@ -108,6 +110,8 @@ export class PositionBook {
         tpPct: r.takeProfitPct,
         mode: r.mode,
         openedAt: r.openedAt,
+        peakPriceUsd: r.entryPriceUsd,
+        trailingActivated: false,
       });
     }
     const closed = await listClosedPositions(this.db, 100, mode);
@@ -218,6 +222,8 @@ export class PositionBook {
       tpPct: decision.take_profit_pct ?? 50,
       mode,
       openedAt: Date.now(),
+      peakPriceUsd: entryPriceUsd,
+      trailingActivated: false,
     };
     this.positions.set(id, pos);
 
@@ -276,7 +282,32 @@ export class PositionBook {
     if (priceUsd !== undefined && priceUsd > 0) pos.currentPriceUsd = priceUsd;
     if (marketCapUsd !== undefined && marketCapUsd > 0) pos.currentMarketCapUsd = marketCapUsd;
 
+    // Update peak price for trailing stop
+    if (pos.currentPriceUsd > pos.peakPriceUsd) {
+      pos.peakPriceUsd = pos.currentPriceUsd;
+    }
+
     const pnlPct = this.pnlPct(pos);
+    const ageSec = (Date.now() - pos.openedAt) / 1000;
+
+    // Time-based stale exit: close positions with no movement after 30 min
+    if (ageSec > 1800 && Math.abs(pnlPct) < 2 && pnlPct <= 0.5) {
+      this.close(pos, pnlPct, "timeout-stale");
+      return;
+    }
+
+    // Trailing stop: activate once position reaches 50% of take-profit target
+    if (!pos.trailingActivated && pnlPct >= pos.tpPct * 0.5) {
+      pos.trailingActivated = true;
+    }
+
+    if (pos.trailingActivated) {
+      const drawdownFromPeak = ((pos.currentPriceUsd - pos.peakPriceUsd) / pos.peakPriceUsd) * 100;
+      if (drawdownFromPeak <= -10) {
+        this.close(pos, pnlPct, "trailing-stop hit");
+        return;
+      }
+    }
 
     if (pnlPct <= -pos.slPct) {
       this.close(pos, pnlPct, "stop-loss hit");
@@ -343,6 +374,15 @@ export class PositionBook {
     const pos = this.positions.get(id);
     if (!pos) return false;
     this.finalizeClose(pos, pnlPct, reason);
+    return true;
+  }
+
+  /** Public exit with swap execution — used for LLM-driven and external exit decisions. */
+  async exitPosition(id: string, reason: string): Promise<boolean> {
+    const pos = this.positions.get(id);
+    if (!pos) return false;
+    const pnlPct = this.pnlPct(pos);
+    await this.close(pos, pnlPct, reason);
     return true;
   }
 

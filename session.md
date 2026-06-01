@@ -152,3 +152,41 @@ NEXT_PUBLIC_MOCK=0
 - Agent needs DB cleanup + restart: sold tokens manually, old positions restored without balance
 ```
 
+---
+
+### 16. Manual Sell Reconciliation (Auto-Close)
+**Masalah**: Sell manual di wallet → posisi tetep nyangkut di Active, ga masuk History
+**Root Cause**: `PositionBook.close()` gagal swap (balance 0) → `return` early, posisi tetep open
+**Fix**:
+- `apps/agent/src/positions.ts` — extract `finalizeClose()` dari `close()`, tambah `forceClose(id, pnlPct, reason)` — close tanpa swap
+- `apps/agent/src/index.ts` — `reconTimer` setiap 15 detik: cek on-chain token balance semua live position, kalo `rawAmount === "0"` → `book.forceClose()` dengan reason `"manual-sell-detected"`
+
+### 17. Config Panel — APPLY CONFIG Button
+**Masalah**: Config di dashboard langsung commit per keystroke, ga ada tombol Apply, risk config ga pernah sampe agent
+**Fix**:
+- `apps/dashboard/components/panels/Controls.tsx` — draft state + APPLY CONFIG + REVERT button + "UNSAVED CHANGES" indicator
+- `apps/dashboard/store/ui.ts` — `applyConfig()` batch action
+- `packages/shared-types/src/events.ts` — `SetRiskConfigEvent` (maxConcurrent, dailyLossCapSol, defaultStopLossPct, defaultTakeProfitPct, screeningPreset)
+- `packages/realtime/src/socket-server.ts` — wire `set_risk_config` client→server
+- `packages/realtime/src/server.ts` — wire `onSetRiskConfig` handler
+- `apps/agent/src/index.ts` — `onSetRiskConfig` → update `config` runtime (field mapping: `dailyLossCapSol`→`maxDailyLossSol`, `maxConcurrent`→`maxConcurrentPositions`)
+
+### 18. Balance Dashboard Speed Fix
+**Masalah**: SOL balance + equity curve update lelet (12 detik), bukan 2-3 detik
+**Root Cause**: `snapshot()` cuma dipanggil setelah `runCycle` selesai (CYCLE_MS=12000)
+**Fix**: `balTimer` sekarang langsung publish `holdings_snapshot` + push `balanceHistory` setiap `fetchWalletBalance()` selesai (3 detik)
+
+### 19. Mock Position Lifecycle
+**Fix**:
+- `packages/realtime/src/mock-producer.ts` — position lifecycle: close old, open new setiap 10 detik
+- `apps/dashboard/hooks/use-realtime.ts` — mock mode position lifecycle simulation
+
+### 20. VPS Deploy (Session Ini)
+```bash
+cd ~/anton-terminal && git pull
+pnpm --filter @anton/shared-types build
+pnpm --filter @anton/realtime build
+pm2 restart anton-agent
+pm2 restart anton-dashboard
+```
+

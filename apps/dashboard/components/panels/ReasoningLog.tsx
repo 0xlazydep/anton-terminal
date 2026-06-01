@@ -15,7 +15,7 @@ import { fmtTime, cn } from "@/lib/utils";
 function ActionGlyph({
   action,
 }: {
-  action: "BUY" | "SELL" | "HOLD" | "SKIP" | "SET_SL" | "SET_TP";
+  action: "BUY" | "SELL" | "HOLD" | "SKIP" | "SET_SL" | "SET_TP" | "EXIT";
 }) {
   switch (action) {
     case "BUY":
@@ -52,6 +52,12 @@ function ActionGlyph({
       return (
         <Badge variant="profit" className="shrink-0">
           TP
+        </Badge>
+      );
+    case "EXIT":
+      return (
+        <Badge variant="loss" className="shrink-0">
+          ◀ EXIT
         </Badge>
       );
     default:
