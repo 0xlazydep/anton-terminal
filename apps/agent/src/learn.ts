@@ -64,7 +64,7 @@ async function reflectWithLLM(
         { role: "user", content: prompt },
       ],
       temperature: 0.3,
-      max_tokens: 150,
+      max_tokens: 300,
     });
 
     return msg.content?.trim() ?? `${isWin ? "Winning" : "Losing"} trade on ${trade.symbol ?? trade.mint.slice(0, 8)}`;

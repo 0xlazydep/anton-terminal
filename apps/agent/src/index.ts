@@ -300,6 +300,8 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
         );
         if (opened) {
           reason(bus, `Opened ${config.mode} position ${decision.symbol ?? ""} · ${decision.size_sol} SOL`, decision.confidence);
+        } else {
+          reason(bus, `⛔ Swap failed for ${decision.symbol ?? ""} — check liquidity or pool availability`, 0.6);
         }
       }
     }

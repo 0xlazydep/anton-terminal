@@ -73,7 +73,7 @@ export function Learning() {
                   className="flex items-start gap-2 border border-[var(--border)] p-2 mb-1 last:mb-0"
                 >
                   <SeverityBadge severity={l.severity} />
-                  <span className="text-[10px] text-foreground leading-relaxed">
+                  <span className="text-[10px] text-foreground leading-relaxed break-words">
                     {l.summary}
                   </span>
                 </div>
