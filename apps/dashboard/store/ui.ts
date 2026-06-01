@@ -50,10 +50,10 @@ export const useUI = create<UIState>()(
       minSpendSol: 0.1,
       maxSpendSol: 0.5,
       maxConcurrent: 5,
-      dailyLossCapSol: 2,
+      dailyLossCapSol: 1,
       defaultStopLossPct: 12,
-      defaultTakeProfitPct: 35,
-      screeningPreset: "normal",
+      defaultTakeProfitPct: 45,
+      screeningPreset: "strict",
 
       selectedMint: null,
       status: "scanning",

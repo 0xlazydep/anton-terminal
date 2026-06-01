@@ -7,16 +7,16 @@ export const tradingConfigSchema = z.object({
   maxSpendSol: z.number().min(0.001).default(0.15),
   defaultSizeSol: z.number().min(0.001).default(0.12),
 
-  maxConcurrentPositions: z.number().int().min(1).default(10),
+  maxConcurrentPositions: z.number().int().min(1).default(5),
   maxEntriesPerMinute: z.number().int().min(1).default(6),
   preventDuplicateMint: z.boolean().default(true),
 
-  maxDailyLossSol: z.number().min(0).default(2),
+  maxDailyLossSol: z.number().min(0).default(1),
   defaultStopLossPct: z.number().default(-20),
   defaultTakeProfitPct: z.number().default(50),
   trailingStop: z.boolean().default(false),
 
-  screeningPreset: z.enum(["strict", "normal", "relaxed"]).default("normal"),
+  screeningPreset: z.enum(["strict", "normal", "relaxed"]).default("strict"),
   minLiquidityUsd: z.number().default(8000),
   minTokenAgeSec: z.number().default(60),
   requireMintFreezeRevoked: z.literal(true).default(true),

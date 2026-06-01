@@ -63,7 +63,7 @@ const config: TradingConfig = parseTradingConfig({
   mode: env.ANTON_MODE,
   screeningPreset: "normal",
   minLiquidityUsd: 8000,
-  maxConcurrentPositions: Number(process.env.ANTON_MAX_CONCURRENT_POSITIONS ?? 10),
+  maxConcurrentPositions: Number(process.env.ANTON_MAX_CONCURRENT_POSITIONS ?? 5),
   minSpendSol: Number(process.env.ANTON_MIN_SPEND_SOL ?? 0.1),
   maxSpendSol: Number(process.env.ANTON_MAX_SPEND_SOL ?? 0.15),
 });
