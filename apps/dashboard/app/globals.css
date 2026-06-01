@@ -229,3 +229,39 @@ table {
 * {
   border-radius: 0 !important;
 }
+
+/* ──────────────────────── Animations ──────────────────────── */
+
+/* Position blink — green flash on profit increase */
+@keyframes blink-up {
+  0% { background-color: oklch(0.82 0.2 150 / 0.25); }
+  100% { background-color: transparent; }
+}
+.dark .animate-blink-up { animation: blink-up 0.6s ease-out; }
+:root .animate-blink-up { animation: blink-up 0.6s ease-out; }
+
+/* Position blink — red flash on loss/drop */
+@keyframes blink-down {
+  0% { background-color: oklch(0.7 0.22 25 / 0.25); }
+  100% { background-color: transparent; }
+}
+.dark .animate-blink-down { animation: blink-down 0.6s ease-out; }
+:root .animate-blink-down { animation: blink-down 0.6s ease-out; }
+
+/* New entry slide-in + fade for live panels */
+@keyframes slide-in {
+  0% { opacity: 0; transform: translateY(-8px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.animate-slide-in {
+  animation: slide-in 0.35s ease-out;
+}
+
+/* Ping dot animation for live indicator */
+@keyframes ping-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.animate-ping-pulse {
+  animation: ping-pulse 1.5s ease-in-out infinite;
+}

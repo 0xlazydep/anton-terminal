@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useUI } from "@/store/ui";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { CrownIcon } from "@/components/ui/crown-icon";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { getSocket } from "@/lib/socket";
 
 function fmtUptime(sec: number): string {
@@ -20,8 +22,8 @@ function PingDot({ connected }: { connected: boolean }) {
     <span className="flex items-center gap-1.5">
       <span
         className={cn(
-          "inline-block h-2 w-2 rounded-full",
-          connected ? "bg-[var(--profit)]" : "bg-[var(--loss)]",
+          "inline-block h-2 w-2",
+          connected ? "bg-[var(--profit)] animate-ping-pulse" : "bg-[var(--loss)]",
         )}
         aria-hidden
       />
@@ -52,9 +54,8 @@ export function Footer({ onConfigToggle }: { onConfigToggle: () => void }) {
 
   return (
     <footer className="sticky bottom-0 z-30 flex h-9 w-full items-center gap-3 border-t border-[var(--border)] bg-background/95 px-4 backdrop-blur-sm">
-      <span className="text-[9px] uppercase tracking-[0.16em] text-[var(--muted-foreground)]">
-        PR1NCE EXPERIMENTAL // ANTON-TERMINAL
-      </span>
+      <CrownIcon className="h-4 w-4 shrink-0 hidden sm:block" />
+      <span className="text-[9px] uppercase tracking-[0.16em] text-[var(--muted-foreground)] truncate">PR1NCE EXPERIMENTAL // ANTON-TERMINAL</span>
 
       <div className="flex-1" />
 
@@ -64,13 +65,16 @@ export function Footer({ onConfigToggle }: { onConfigToggle: () => void }) {
 
       <PingDot connected={connected} />
 
+      <ThemeToggle />
+
       <Button
         variant="ghost"
         size="sm"
         onClick={onConfigToggle}
         className="h-6 px-2 text-[9px] uppercase tracking-[0.14em] text-[var(--muted-foreground)] hover:text-foreground"
       >
-        ⚙ CONFIG
+        <span className="hidden sm:inline">⚙ CONFIG</span>
+        <span className="sm:hidden">⚙</span>
       </Button>
     </footer>
   );

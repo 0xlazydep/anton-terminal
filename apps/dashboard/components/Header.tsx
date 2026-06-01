@@ -78,7 +78,8 @@ export function Header() {
 
       {/* Realized PnL (all-time, closed positions only) */}
       <div className="flex items-center gap-2">
-        <span className="label-mono">REALIZED PnL</span>
+        <span className="label-mono hidden sm:inline">REALIZED PnL</span>
+        <span className="label-mono sm:hidden">PnL</span>
         <span
           className={cn(
             "text-xs font-semibold tabular-nums",

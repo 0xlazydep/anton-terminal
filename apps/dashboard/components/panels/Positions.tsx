@@ -20,6 +20,7 @@ import {
   fmtUsd,
 } from "@/lib/utils";
 import { SolIcon } from "@/components/ui/sol-icon";
+import { useBlink } from "@/hooks/use-blink";
 
 export function Positions() {
   const { positions, totalPnlSol, totalPnlPct, totalSizeSol } = usePositions();
@@ -95,6 +96,8 @@ export function Positions() {
               {positions.map((p) => {
                 const up = p.pnlPct >= 0;
                 const hold = Math.floor((now - p.openedAt) / 1000);
+                const pnlBlink = useBlink(p.pnlPct);
+                const pnlClass = pnlBlink === "up" ? "animate-blink-up" : pnlBlink === "down" ? "animate-blink-down" : "";
                 return (
                   <TR key={p.id}>
                     <TD className="font-semibold">{p.symbol ?? "—"}</TD>
@@ -108,16 +111,18 @@ export function Positions() {
                     <TD className="text-right">{fmtMc(p.currentMarketCapUsd)}</TD>
                     <TD
                       className={cn(
-                        "text-right font-semibold",
+                        "text-right font-semibold transition-colors",
                         up ? "text-[var(--profit)]" : "text-[var(--loss)]",
+                        pnlClass,
                       )}
                     >
                       {fmtPct(p.pnlPct)}
                     </TD>
                     <TD
                       className={cn(
-                        "text-right",
+                        "text-right transition-colors",
                         up ? "text-[var(--profit)]" : "text-[var(--loss)]",
+                        pnlClass,
                       )}
                     >
                       {up ? "+" : ""}
