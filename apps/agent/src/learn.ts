@@ -67,7 +67,11 @@ async function reflectWithLLM(
       max_tokens: 500,
     });
 
-    return msg.content?.trim() ?? `${isWin ? "Winning" : "Losing"} trade on ${trade.symbol ?? trade.mint.slice(0, 8)}`;
+    const text = msg.content?.trim();
+    if (!text || text.length < 10) {
+      return `${isWin ? "Won" : "Lost"} ${trade.pnlPct.toFixed(1)}% on ${trade.symbol ?? "token"} — ${trade.reason}`;
+    }
+    return text;
   } catch {
     return `${isWin ? "Won" : "Lost"} ${trade.pnlPct.toFixed(1)}% on ${trade.symbol ?? "token"} — ${trade.reason}`;
   }
