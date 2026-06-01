@@ -55,33 +55,35 @@ export function Learning() {
           <Badge variant="outline">ADAPTIVE · SELF-IMPROVING</Badge>
         </div>
       </CardHeader>
-      <CardContent className="flex flex-col gap-3 p-3 overflow-auto">
+      <CardContent className="flex flex-row gap-3 p-3 overflow-auto">
         {/* Recent Lessons */}
-        <div className="flex flex-col gap-1">
+        <div className="flex-1 flex flex-col gap-1 min-w-0">
           <span className="text-[9px] font-medium uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
             RECENT LESSONS ({lessons.length})
           </span>
-          {lessons.length === 0 ? (
-            <p className="text-[10px] text-[var(--muted-foreground)] italic py-2">
-              No lessons yet — learning from trades...
-            </p>
-          ) : (
-            lessons.map((l, i) => (
-              <div
-                key={i}
-                className="flex items-start gap-2 border border-[var(--border)] p-2"
-              >
-                <SeverityBadge severity={l.severity} />
-                <span className="text-[10px] text-foreground leading-relaxed">
-                  {l.summary}
-                </span>
-              </div>
-            ))
-          )}
+          <div className="overflow-auto">
+            {lessons.length === 0 ? (
+              <p className="text-[10px] text-[var(--muted-foreground)] italic py-2">
+                No lessons yet...
+              </p>
+            ) : (
+              lessons.map((l, i) => (
+                <div
+                  key={i}
+                  className="flex items-start gap-2 border border-[var(--border)] p-2 mb-1 last:mb-0"
+                >
+                  <SeverityBadge severity={l.severity} />
+                  <span className="text-[10px] text-foreground leading-relaxed">
+                    {l.summary}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
         </div>
 
         {/* Pattern Stats */}
-        <div className="flex flex-col gap-1">
+        <div className="flex-1 flex flex-col gap-1 min-w-0">
           <span className="text-[9px] font-medium uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
             PATTERN STATS
           </span>

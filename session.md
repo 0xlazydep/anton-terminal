@@ -262,10 +262,47 @@ NEXT_PUBLIC_CONFIG_PASSWORD=<redacted>
 
 ---
 
+### 27. Helius WebSocket Real-Time Price Feed
+**Masalah**: DexScreener 3s poll too slow for meme coins — SL/TP bisa telat 3-12 detik. Price move dari 16K→43K missed.
+**Fix**:
+- `packages/solana/src/price-ws.ts` — **NEW**: `HeliusPriceFeed` class, dual feed architecture:
+  - Helius WebSocket `logsSubscribe` → instant price on any on-chain swap (< 500ms)
+  - Jupiter API poll every 1s → keepalive when no swap activity (max 1s stale)
+- `apps/agent/src/positions.ts` — `PositionBook` subscribes to WS on open, unsubscribes on close. `checkExitConditions()` extracted to shared method for both WS and poll paths.
+- `apps/agent/src/index.ts` — `HeliusPriceFeed` wired into PositionBook deps, reads `SOLANA_RPC_WS` env (falls back to `SOLANA_RPC_URL` with https→wss conversion). Cleanup on shutdown.
+- `packages/solana/src/index.ts` — Export `HeliusPriceFeed`
+
+**Architecture**:
+```
+WS logsSubscribe ──→ instant (< 500ms) on swap event
+Jupiter poll 1s  ──→ keepalive, never > 1s stale
+DexScreener poll ──→ fallback if WS down
+```
+
+### 28. Dashboard Fixes — Equity Baseline + Mode Sync + Learning Panel
+**Fix**:
+- `apps/agent/src/index.ts` — `STARTING_SOL` now auto-set from actual wallet balance (`fetchWalletBalance()`) at startup, no longer hardcoded to 10 SOL. Fixes -75% equity curve display.
+- `packages/shared-types/src/events.ts` — Added `mode?: ExecutionMode` + `recentLessons?` + `patternStats?` to `StateSnapshotEvent`
+- `apps/agent/src/index.ts` — `buildStateSnapshot()` now async, queries DB for recent lessons + pattern stats, includes mode
+- `apps/dashboard/hooks/use-realtime.ts` — Dashboard auto-syncs mode from state_snapshot, caches learning data
+- `apps/dashboard/components/panels/Learning.tsx` — **NEW**: LEARNING panel showing:
+  - RECENT LESSONS: 5 latest LLM reflections with severity badge (CRIT/IMP/NOTE)
+  - PATTERN STATS: table of verdict/mc_range/source → W/L, WR%, avg PnL. Red row if WR < 30%, green if > 50%.
+- `apps/dashboard/app/page.tsx` — Learning panel placed below Screening + SmartWalletFeed (full-width row)
+
+### 29. VPS Env — Updated
+```
+SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=<premium>
+SOLANA_RPC_WS=wss://mainnet.helius-rpc.com/?api-key=<premium>
+```
+
+---
+
 ### Last Action
-- All trading fixes + learning system deployed on VPS
+- All trading fixes + learning system + WS real-time price feed deployed on VPS
 - Agent running with WR ~80% (from 15% baseline)
-- Realized PnL: -0.0019 SOL (-0.37%) — massive improvement from -12% baseline
-- Dashboard: footer with uptime/ping, config behind password gate, screening SKIP/BUY count
-- Agent left running for multi-hour observation
+- Realized PnL: +2.8% (from -12% baseline)
+- Dashboard: LEARNING panel, footer with uptime/ping, config behind password gate, mode auto-sync
+- Agent left running overnight for learning data accumulation
+- Balance chart baseline fixed (wallet balance, not hardcoded 10 SOL)
 
