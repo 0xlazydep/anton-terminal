@@ -8,8 +8,6 @@
  * Falls back to DexScreener polling when WebSocket is unavailable.
  */
 
-import { Connection, PublicKey } from "@solana/web3.js";
-
 interface PriceCallback {
   (priceUsd: number, marketCapUsd?: number): void;
 }
@@ -28,15 +26,11 @@ export class HeliusPriceFeed {
   private nextId = 1;
   private pendingRequests = new Map<number, { resolve: (id: number) => void; reject: (err: Error) => void }>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly rpcUrl: string;
   private readonly wsUrl: string;
-  private readonly connection: Connection;
   private connected = false;
 
-  constructor(rpcUrl: string) {
-    this.rpcUrl = rpcUrl;
-    this.wsUrl = rpcUrl.replace("https://", "wss://");
-    this.connection = new Connection(rpcUrl, "processed");
+  constructor(wsUrl: string) {
+    this.wsUrl = wsUrl.startsWith("wss://") ? wsUrl : wsUrl.replace("https://", "wss://");
     this.connect();
   }
 
