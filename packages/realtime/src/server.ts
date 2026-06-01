@@ -117,6 +117,7 @@ async function main(): Promise<void> {
     controls: {
       onSetMode: (e) => log(`control set_mode → ${e.mode}`),
       onSetSpendLimits: (e) => log(`control set_spend_limits → ${e.minSol}..${e.maxSol} SOL`),
+      onSetRiskConfig: (e) => log(`control set_risk_config → concurrent:${e.maxConcurrent} cap:${e.dailyLossCapSol} sl:${e.defaultStopLossPct}% tp:${e.defaultTakeProfitPct}%`),
       onManualEntry: (e) => log(`control manual_entry → ${e.mint} ${e.sizeSol} SOL`),
       onEmergencyStop: () => log("control emergency_stop"),
     },

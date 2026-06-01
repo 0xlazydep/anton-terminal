@@ -357,6 +357,14 @@ async function bootstrap(): Promise<void> {
           config.maxSpendSol = e.maxSol;
           log(`control set_spend_limits → ${e.minSol}..${e.maxSol} SOL`);
         },
+        onSetRiskConfig: (e) => {
+          config.maxConcurrentPositions = e.maxConcurrent;
+          config.maxDailyLossSol = e.dailyLossCapSol;
+          config.defaultStopLossPct = e.defaultStopLossPct;
+          config.defaultTakeProfitPct = e.defaultTakeProfitPct;
+          config.screeningPreset = e.screeningPreset;
+          log(`control set_risk_config → concurrent:${e.maxConcurrent} cap:${e.dailyLossCapSol} sl:${e.defaultStopLossPct}% tp:${e.defaultTakeProfitPct}% preset:${e.screeningPreset}`);
+        },
         onEmergencyStop: () => {
           config.mode = "dry-run";
           log("control emergency_stop → forced dry-run");
@@ -387,6 +395,29 @@ async function bootstrap(): Promise<void> {
     }
   }, 3000);
 
+  // Position reconciliation — check on-chain token balances for live positions
+  // and auto-close any that were sold externally (manual wallet sell).
+  const reconTimer = setInterval(async () => {
+    if (config.mode !== "live" || !env.SOLANA_PRIVATE_KEY || !env.SOLANA_RPC_URL) return;
+    if (book.count === 0) return;
+    try {
+      const wallet = loadHotWallet(env.SOLANA_PRIVATE_KEY);
+      const connection = createConnection(env.SOLANA_RPC_URL);
+      const snap = book.snapshotState();
+      for (const pos of snap.positions) {
+        if (pos.mode !== "live") continue;
+        const balance = await getTokenBalance(connection, wallet.publicKey, pos.mint);
+        if (!balance || balance.rawAmount === "0") {
+          const pnlPct = ((pos.currentPriceUsd - pos.entryPriceUsd) / pos.entryPriceUsd) * 100;
+          await book.forceClose(pos.id, pnlPct, "manual-sell-detected");
+          log(`reconciled: ${pos.symbol ?? pos.mint.slice(0, 8)} was sold externally → closed`);
+        }
+      }
+    } catch (err) {
+      log(`reconciliation error: ${String(err).slice(0, 80)}`);
+    }
+  }, 15_000);
+
   let running = true;
   const loop = async (): Promise<void> => {
     await new Promise((r) => setTimeout(r, 500));
@@ -410,6 +441,7 @@ async function bootstrap(): Promise<void> {
     running = false;
     clearInterval(tickTimer);
     clearInterval(balTimer);
+    clearInterval(reconTimer);
     server?.close();
     void bus.close();
     void dbClient?.end();

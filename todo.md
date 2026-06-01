@@ -134,16 +134,6 @@ Status snapshot per **31 May 2026**. Full pipeline **kebukti jalan end-to-end:**
 2. **Position history belum mock-mode** — `usePositionHistory` cuma ke-fill di live Socket.IO mode. Mock mode belum ada history feed.
 3. **`usePositionHistory` mock-mode** — mock `tickPositions` belum emit `position_closed` events. Perlu tambahin closed position simulation.
 
-### 🟡 MEDIUM — Features & integration
-
-- [ ] **DeepSeek API key asli** — isi `DEEPSEEK_API_KEY` di `.env`, agent otomatis pakai DeepSeek V4 beneran (tanpa ubah kode)
-- [ ] **Helius RPC key** — isi `SOLANA_RPC_URL` + `HELIUS_API_KEY`, screening otomatis pakai on-chain mint authority check beneran
-- [ ] **Live mode** — set `ANTON_MODE=live` di `.env`. Butuh: wallet `SOLANA_PRIVATE_KEY`, Docker (Redis + Postgres), Jupiter API key
-- [ ] **Execution package** — `@anton/execution` belum ada. Sekarang agent cuma simulasi posisi. Buat eksekusi asli: Jupiter swap + Jito MEV → `packages/execution`.
-- [ ] **Memory + Learning** — `@anton/memory` + `@anton/learning` belum ada (persistence pelajaran antar-sesi)
-- [ ] **Dashboard: maxConcurrentPositions live-config** — dashboard's Controls panel punya "MAX CONCURRENT" input tapi gak emit ke agent. Perlu Socket.IO `set_risk` event + handler di agent.
-- [ ] **SSE bridge memory leak** — `createReasoningSseBridge` cleanup gak unsubscribe dari bus (gak ada method unsubscribe di EventBus). Handler mati numpuk tiap client disconnect. Gak bikin event dobel, tapi boros memory.
-
 ### 🟢 DONE — Sudah beres semua batch 1 + 2
 
 - [x] Holdings snapshot event (emit per cycle, dashboard listener)

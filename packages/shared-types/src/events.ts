@@ -1,7 +1,7 @@
 /** Realtime event contract (backend → dashboard) and queue names. */
 
 import type { ExecutionMode, TradeAction } from "./decisions.js";
-import type { ScreeningVerdict } from "./screening.js";
+import type { ScreeningPreset, ScreeningVerdict } from "./screening.js";
 import type { TokenSource } from "./tokens.js";
 
 export type AgentState =
@@ -163,6 +163,14 @@ export interface SetModeEvent {
 export interface SetSpendLimitsEvent {
   minSol: number;
   maxSol: number;
+}
+
+export interface SetRiskConfigEvent {
+  maxConcurrent: number;
+  dailyLossCapSol: number;
+  defaultStopLossPct: number;
+  defaultTakeProfitPct: number;
+  screeningPreset: ScreeningPreset;
 }
 
 export interface ManualEntryEvent {

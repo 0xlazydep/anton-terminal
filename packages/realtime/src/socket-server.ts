@@ -16,6 +16,7 @@ import type {
   AgentStatusEvent,
   SetModeEvent,
   SetSpendLimitsEvent,
+  SetRiskConfigEvent,
   ManualEntryEvent,
 } from "@anton/shared-types";
 import type { EventBus } from "./bus.js";
@@ -41,6 +42,7 @@ export type SnapshotProvider = () => StateSnapshotEvent | Promise<StateSnapshotE
 export interface ClientToServerEvents {
   set_mode: (e: SetModeEvent) => void;
   set_spend_limits: (e: SetSpendLimitsEvent) => void;
+  set_risk_config: (e: SetRiskConfigEvent) => void;
   manual_entry: (e: ManualEntryEvent) => void;
   emergency_stop: () => void;
 }
@@ -48,6 +50,7 @@ export interface ClientToServerEvents {
 export interface ControlHandlers {
   onSetMode?: (e: SetModeEvent) => void;
   onSetSpendLimits?: (e: SetSpendLimitsEvent) => void;
+  onSetRiskConfig?: (e: SetRiskConfigEvent) => void;
   onManualEntry?: (e: ManualEntryEvent) => void;
   onEmergencyStop?: () => void;
 }
@@ -98,6 +101,7 @@ export function createTradingSocketServer(opts: TradingSocketOptions): SocketIOS
     const c = opts.controls ?? {};
     socket.on("set_mode", (e) => c.onSetMode?.(e));
     socket.on("set_spend_limits", (e) => c.onSetSpendLimits?.(e));
+    socket.on("set_risk_config", (e) => c.onSetRiskConfig?.(e));
     socket.on("manual_entry", (e) => c.onManualEntry?.(e));
     socket.on("emergency_stop", () => c.onEmergencyStop?.());
 

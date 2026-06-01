@@ -331,6 +331,22 @@ export class PositionBook {
       }
     }
 
+    this.finalizeClose(pos, pnlPct, reason);
+  }
+
+  /**
+   * Close a position WITHOUT attempting an on-chain swap. Use when the
+   * token was already sold manually (balance = 0 on chain) and we just
+   * need to reconcile the PositionBook with reality.
+   */
+  async forceClose(id: string, pnlPct: number, reason: string): Promise<boolean> {
+    const pos = this.positions.get(id);
+    if (!pos) return false;
+    this.finalizeClose(pos, pnlPct, reason);
+    return true;
+  }
+
+  private finalizeClose(pos: OpenPosition, pnlPct: number, reason: string): void {
     this.positions.delete(pos.id);
     const pnlSol = pos.sizeSol * (pnlPct / 100);
     this.realizedPnlSol += pnlSol;

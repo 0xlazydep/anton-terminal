@@ -28,6 +28,16 @@ export interface UIState {
   setMode: (mode: ExecutionMode) => void;
   setSpend: (minSpendSol: number, maxSpendSol: number) => void;
   setRisk: (next: Partial<UIState>) => void;
+  applyConfig: (config: {
+    mode: ExecutionMode;
+    minSpendSol: number;
+    maxSpendSol: number;
+    maxConcurrent: number;
+    dailyLossCapSol: number;
+    defaultStopLossPct: number;
+    defaultTakeProfitPct: number;
+    screeningPreset: ScreeningPreset;
+  }) => void;
   setSelectedMint: (mint: string | null) => void;
   setStatus: (state: AgentState, uptimeSec?: number) => void;
   setSolBalance: (sol: number) => void;
@@ -54,6 +64,7 @@ export const useUI = create<UIState>()(
       setSpend: (minSpendSol, maxSpendSol) =>
         set({ minSpendSol, maxSpendSol }),
       setRisk: (next) => set(next as UIState),
+      applyConfig: (config) => set(config),
       setSelectedMint: (selectedMint) => set({ selectedMint }),
       setStatus: (status, uptimeSec) =>
         set((s) => ({ status, uptimeSec: uptimeSec ?? s.uptimeSec })),

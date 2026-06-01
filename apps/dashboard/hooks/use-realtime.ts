@@ -58,6 +58,90 @@ export function useRealtime(): void {
         });
       }, 1200);
 
+      const lifecycleId = window.setInterval(() => {
+        const now = Date.now();
+        const CLOSE_REASONS = [
+          "TP hit at +35% · auto close",
+          "SL triggered at -12% · position flattened",
+          "Smart-wallet W-exit detected · mirror exit",
+          "Manual exit · operator closed position",
+          "Time-based exit · hold exceeded 4h",
+          "Volatility spike · exited for safety",
+        ];
+
+        qc.setQueryData<MockPosition[]>(["positions"], (prev) => {
+          if (!prev || prev.length === 0) return prev;
+          const remaining = [...prev];
+          const closed: ClosedPosition[] = [];
+
+          const closable = remaining
+            .map((p, idx) => ({ p, idx }))
+            .filter(({ p }) => now - p.openedAt > 30_000)
+            .sort((a, b) => a.p.openedAt - b.p.openedAt);
+
+          const closeCount = Math.min(closable.length, Math.random() > 0.5 ? 2 : 1);
+          for (let i = 0; i < closeCount; i++) {
+            const { p, idx } = closable[i]!;
+            const reason = CLOSE_REASONS[Math.floor(Math.random() * CLOSE_REASONS.length)]!;
+            closed.push({
+              ...p,
+              closePriceUsd: p.currentPriceUsd,
+              reason,
+              closedAt: now,
+            });
+            remaining.splice(idx - i, 1);
+          }
+
+          if (closed.length > 0) {
+            qc.setQueryData<ClosedPosition[]>(["position-history"], (h) =>
+              [...closed, ...(h ?? [])].slice(0, 100),
+            );
+          }
+
+          const openCount = Math.min(2, Math.floor(Math.random() * 2) + 1);
+          const SYMBOLS = [
+            "PEPE3", "WIFHAT", "BONK2", "MYRO", "POPCAT", "MOTHER",
+            "GIGA", "PNUT", "GOAT", "CHILLGUY",
+          ];
+          const randBetween = (min: number, max: number) =>
+            min + (max - min) * Math.random();
+          const makeMint = () => {
+            const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz123456789";
+            let s = "";
+            for (let j = 0; j < 44; j++) s += chars[Math.floor(Math.random() * chars.length)];
+            return s;
+          };
+
+          for (let i = 0; i < openCount; i++) {
+            const entryPriceUsd = randBetween(0.00002, 0.012);
+            const driftPct = randBetween(-18, 42);
+            const sizeSol = randBetween(0.08, 0.42);
+            const currentPriceUsd = entryPriceUsd * (1 + driftPct / 100);
+            const pnlSol = sizeSol * (driftPct / 100);
+            const entryMc = randBetween(20_000, 400_000);
+            const currentMc = entryMc * (1 + driftPct / 100);
+            remaining.push({
+              id: `pos_new_${Date.now()}_${i}`,
+              mint: makeMint(),
+              symbol: SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)],
+              entryPriceUsd,
+              entryMarketCapUsd: entryMc,
+              sizeSol,
+              mode: Math.random() > 0.2 ? "dry-run" : "live",
+              currentPriceUsd,
+              currentMarketCapUsd: currentMc,
+              pnlPct: driftPct,
+              pnlSol,
+              slPct: 12,
+              tpPct: 35,
+              openedAt: now,
+            });
+          }
+
+          return remaining;
+        });
+      }, 10_000);
+
       const screenId = window.setInterval(() => {
         qc.setQueryData<MockScreeningRow[]>(["screening"], (prev) => {
           const next = [makeScreeningRow(), ...(prev ?? [])];
@@ -79,6 +163,7 @@ export function useRealtime(): void {
 
       return () => {
         clearInterval(tickId);
+        clearInterval(lifecycleId);
         clearInterval(screenId);
         clearInterval(walletId);
         clearInterval(statusId);

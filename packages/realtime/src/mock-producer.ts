@@ -18,6 +18,7 @@ import type {
   AgentState,
   AgentStatusEvent,
   EntryDecisionEvent,
+  PositionClosedEvent,
   PositionOpenedEvent,
   PositionUpdateEvent,
   ReasoningStepEvent,
@@ -102,6 +103,7 @@ interface LivePosition extends PositionOpenedEvent {
   currentPriceUsd: number;
   slPct: number;
   tpPct: number;
+  openedAt: number;
 }
 
 function makePosition(): LivePosition {
@@ -117,6 +119,7 @@ function makePosition(): LivePosition {
     currentPriceUsd: entryPriceUsd * (1 + drift / 100),
     slPct: 12,
     tpPct: 35,
+    openedAt: Date.now(),
   };
 }
 
@@ -139,24 +142,40 @@ export function startMockProducer(
   const positions: LivePosition[] = Array.from({ length: 5 }, makePosition);
   let step = 0;
 
-  const emitOpenedSnapshot = (): void => {
-    for (const p of positions) {
-      const opened: PositionOpenedEvent = {
-        id: p.id,
-        mint: p.mint,
-        symbol: p.symbol,
-        entryPriceUsd: p.entryPriceUsd,
-        sizeSol: p.sizeSol,
-        mode: p.mode,
-      };
-      void bus.publish(CHANNELS.trading, { type: "position_opened", data: opened });
-    }
+  // ─── Helpers for emitting individual position events ───
+
+  const emitOpened = (p: LivePosition): void => {
+    const opened: PositionOpenedEvent = {
+      id: p.id,
+      mint: p.mint,
+      symbol: p.symbol,
+      entryPriceUsd: p.entryPriceUsd,
+      sizeSol: p.sizeSol,
+      mode: p.mode,
+    };
+    void bus.publish(CHANNELS.trading, { type: "position_opened", data: opened });
   };
 
-  emitOpenedSnapshot();
-  // Re-broadcast the open snapshot periodically so clients that connect after
-  // startup still receive current positions (in-memory bus has no replay).
-  const snapshotId = setInterval(emitOpenedSnapshot, 5000);
+  const emitClosed = (p: LivePosition, reason: string): void => {
+    const pnlPct = ((p.currentPriceUsd - p.entryPriceUsd) / p.entryPriceUsd) * 100;
+    const pnlSol = p.sizeSol * (pnlPct / 100);
+    const closed: PositionClosedEvent = {
+      id: p.id,
+      pnlPct,
+      pnlSol,
+      closePriceUsd: p.currentPriceUsd,
+      reason,
+    };
+    void bus.publish(CHANNELS.trading, { type: "position_closed", data: closed });
+  };
+
+  // Initial snapshot — emit all positions as opened
+  for (const p of positions) emitOpened(p);
+
+  // Periodic full snapshot so late-joining clients see current state
+  const snapshotId = setInterval(() => {
+    for (const p of positions) emitOpened(p);
+  }, 5000);
 
   // Position price ticks → position_update (every 1.2s).
   const tickId = setInterval(() => {
@@ -174,6 +193,27 @@ export function startMockProducer(
       void bus.publish(CHANNELS.trading, { type: "position_update", data: update });
     }
   }, 1200);
+
+  // ─── Position lifecycle — periodically close old positions & open new ones ───
+  const lifecycleId = setInterval(() => {
+    // Close 1-2 random positions
+    const toClose = 1 + Math.floor(rand() * 2);
+    for (let i = 0; i < toClose && positions.length > 2; i++) {
+      const idx = Math.floor(rand() * positions.length);
+      const removed = positions.splice(idx, 1)[0];
+      if (!removed) continue;
+      const reasons = ["TAKE PROFIT", "STOP LOSS", "MANUAL CLOSE", "REBALANCE", "TIME EXIT"];
+      emitClosed(removed, pick(reasons));
+    }
+
+    // Open 1-3 new positions to maintain ~3-8 active
+    const target = 3 + Math.floor(rand() * 6);
+    while (positions.length < target) {
+      const fresh = makePosition();
+      positions.push(fresh);
+      emitOpened(fresh);
+    }
+  }, 10000);
 
   // Screening rows (every 3.2s) — raw on CHANNELS.screening.
   const screenId = setInterval(() => {
@@ -260,6 +300,7 @@ export function startMockProducer(
   return () => {
     clearInterval(snapshotId);
     clearInterval(tickId);
+    clearInterval(lifecycleId);
     clearInterval(screenId);
     clearInterval(walletId);
     clearInterval(statusId);

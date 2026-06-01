@@ -29,20 +29,54 @@ const PRESETS: { value: ScreeningPreset; label: string }[] = [
   { value: "relaxed", label: "RELAXED" },
 ];
 
+interface DraftConfig {
+  mode: ExecutionMode;
+  minSpendSol: number;
+  maxSpendSol: number;
+  maxConcurrent: number;
+  dailyLossCapSol: number;
+  defaultStopLossPct: number;
+  defaultTakeProfitPct: number;
+  screeningPreset: ScreeningPreset;
+}
+
+function configEqual(a: DraftConfig, b: DraftConfig): boolean {
+  return (
+    a.mode === b.mode &&
+    a.minSpendSol === b.minSpendSol &&
+    a.maxSpendSol === b.maxSpendSol &&
+    a.maxConcurrent === b.maxConcurrent &&
+    a.dailyLossCapSol === b.dailyLossCapSol &&
+    a.defaultStopLossPct === b.defaultStopLossPct &&
+    a.defaultTakeProfitPct === b.defaultTakeProfitPct &&
+    a.screeningPreset === b.screeningPreset
+  );
+}
+
 export function Controls() {
-  const {
-    mode,
-    minSpendSol,
-    maxSpendSol,
-    maxConcurrent,
-    dailyLossCapSol,
-    defaultStopLossPct,
-    defaultTakeProfitPct,
-    screeningPreset,
-    setMode,
-    setSpend,
-    setRisk,
-  } = useUI();
+  const store = useUI();
+
+  const [draft, setDraft] = useState<DraftConfig>({
+    mode: store.mode,
+    minSpendSol: store.minSpendSol,
+    maxSpendSol: store.maxSpendSol,
+    maxConcurrent: store.maxConcurrent,
+    dailyLossCapSol: store.dailyLossCapSol,
+    defaultStopLossPct: store.defaultStopLossPct,
+    defaultTakeProfitPct: store.defaultTakeProfitPct,
+    screeningPreset: store.screeningPreset,
+  });
+
+  const synced = configEqual(draft, {
+    mode: store.mode,
+    minSpendSol: store.minSpendSol,
+    maxSpendSol: store.maxSpendSol,
+    maxConcurrent: store.maxConcurrent,
+    dailyLossCapSol: store.dailyLossCapSol,
+    defaultStopLossPct: store.defaultStopLossPct,
+    defaultTakeProfitPct: store.defaultTakeProfitPct,
+    screeningPreset: store.screeningPreset,
+  });
 
   const [confirmingLive, setConfirmingLive] = useState(false);
 
@@ -54,7 +88,6 @@ export function Controls() {
         // No-op in mock mode or when offline
       }
     }
-    // In mock mode, just no-op. Could console.debug for dev visibility.
   };
 
   const onToggleMode = (next: boolean) => {
@@ -63,39 +96,54 @@ export function Controls() {
       setConfirmingLive(true);
       return;
     }
-    setMode("dry-run");
+    store.setMode("dry-run");
     const payload: SetModeEvent = { mode: "dry-run" };
     emit("set_mode", payload);
   };
 
   const confirmLive = () => {
-    setMode("live");
+    store.setMode("live");
     setConfirmingLive(false);
     const payload: SetModeEvent = { mode: "live" };
     emit("set_mode", payload);
   };
 
-  const onSpendChange = (
-    key: "minSpendSol" | "maxSpendSol",
-    raw: string,
-  ) => {
-    const v = Number(raw);
-    if (Number.isNaN(v) || v < 0) return;
-    const next = {
-      minSpendSol: key === "minSpendSol" ? v : minSpendSol,
-      maxSpendSol: key === "maxSpendSol" ? v : maxSpendSol,
+  const onApplyConfig = () => {
+    store.applyConfig({ ...draft, mode: store.mode });
+    const spendPayload: SetSpendLimitsEvent = {
+      minSol: draft.minSpendSol,
+      maxSol: draft.maxSpendSol,
     };
-    setSpend(next.minSpendSol, next.maxSpendSol);
-    const payload: SetSpendLimitsEvent = {
-      minSol: next.minSpendSol,
-      maxSol: next.maxSpendSol,
-    };
-    emit("set_spend_limits", payload);
+    emit("set_spend_limits", spendPayload);
+    emit("set_risk_config", {
+      maxConcurrent: draft.maxConcurrent,
+      dailyLossCapSol: draft.dailyLossCapSol,
+      defaultStopLossPct: draft.defaultStopLossPct,
+      defaultTakeProfitPct: draft.defaultTakeProfitPct,
+      screeningPreset: draft.screeningPreset,
+    });
+  };
+
+  const onRevert = () => {
+    setDraft({
+      mode: store.mode,
+      minSpendSol: store.minSpendSol,
+      maxSpendSol: store.maxSpendSol,
+      maxConcurrent: store.maxConcurrent,
+      dailyLossCapSol: store.dailyLossCapSol,
+      defaultStopLossPct: store.defaultStopLossPct,
+      defaultTakeProfitPct: store.defaultTakeProfitPct,
+      screeningPreset: store.screeningPreset,
+    });
+  };
+
+  const updateDraft = (patch: Partial<DraftConfig>) => {
+    setDraft((prev) => ({ ...prev, ...patch }));
   };
 
   const onEmergency = () => {
     emit("emergency_stop", {});
-    setMode("dry-run");
+    store.setMode("dry-run");
   };
 
   return (
@@ -103,8 +151,8 @@ export function Controls() {
       <CardHeader>
         <div className="flex items-center gap-3">
           <CardTitle>CONTROLS</CardTitle>
-          <Badge variant={mode === "live" ? "loss" : "outline"}>
-            MODE · {mode === "live" ? "LIVE" : "DRY-RUN"}
+          <Badge variant={store.mode === "live" ? "loss" : "outline"}>
+            MODE · {store.mode === "live" ? "LIVE" : "DRY-RUN"}
           </Badge>
         </div>
         <span className="label-mono">OPERATOR → AGENT</span>
@@ -119,18 +167,18 @@ export function Controls() {
             <span
               className={cn(
                 "text-sm font-semibold uppercase tracking-[0.18em]",
-                mode === "live"
+                store.mode === "live"
                   ? "text-[var(--loss)]"
                   : "text-foreground",
               )}
             >
-              {mode === "live" ? "LIVE · REAL FUNDS" : "DRY-RUN · SIMULATED"}
+              {store.mode === "live" ? "LIVE · REAL FUNDS" : "DRY-RUN · SIMULATED"}
             </span>
           </div>
           <div className="flex items-center gap-2">
             <span className="label-mono">DRY</span>
             <Switch
-              checked={mode === "live"}
+              checked={store.mode === "live"}
               onCheckedChange={onToggleMode}
               aria-label="Toggle execution mode"
             />
@@ -145,16 +193,12 @@ export function Controls() {
             </p>
             <p className="text-[10px] text-foreground/80 mb-3 leading-relaxed">
               Real SOL will be spent. Anton will execute trades up to{" "}
-              <span className="font-semibold">{maxSpendSol} SOL</span> per
-              position, capped at <span className="font-semibold">{dailyLossCapSol} SOL</span>{" "}
+              <span className="font-semibold">{draft.maxSpendSol} SOL</span> per
+              position, capped at <span className="font-semibold">{draft.dailyLossCapSol} SOL</span>{" "}
               daily loss. Continue?
             </p>
             <div className="flex gap-2">
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={confirmLive}
-              >
+              <Button variant="danger" size="sm" onClick={confirmLive}>
                 CONFIRM LIVE
               </Button>
               <Button
@@ -178,8 +222,8 @@ export function Controls() {
             step="0.01"
             min={0}
             unit="SOL"
-            value={minSpendSol}
-            onChange={(e) => onSpendChange("minSpendSol", e.target.value)}
+            value={draft.minSpendSol}
+            onChange={(e) => updateDraft({ minSpendSol: Number(e.target.value) || 0 })}
           />
           <LabeledInput
             label="MAX SPEND"
@@ -187,8 +231,8 @@ export function Controls() {
             step="0.01"
             min={0}
             unit="SOL"
-            value={maxSpendSol}
-            onChange={(e) => onSpendChange("maxSpendSol", e.target.value)}
+            value={draft.maxSpendSol}
+            onChange={(e) => updateDraft({ maxSpendSol: Number(e.target.value) || 0 })}
           />
         </div>
 
@@ -200,9 +244,9 @@ export function Controls() {
             label="MAX CONCURRENT"
             type="number"
             min={1}
-            value={maxConcurrent}
+            value={draft.maxConcurrent}
             onChange={(e) =>
-              setRisk({ maxConcurrent: Math.max(1, Number(e.target.value)) })
+              updateDraft({ maxConcurrent: Math.max(1, Number(e.target.value) || 1) })
             }
           />
           <LabeledInput
@@ -211,9 +255,9 @@ export function Controls() {
             step="0.1"
             min={0}
             unit="SOL"
-            value={dailyLossCapSol}
+            value={draft.dailyLossCapSol}
             onChange={(e) =>
-              setRisk({ dailyLossCapSol: Math.max(0, Number(e.target.value)) })
+              updateDraft({ dailyLossCapSol: Math.max(0, Number(e.target.value) || 0) })
             }
           />
           <LabeledInput
@@ -221,9 +265,9 @@ export function Controls() {
             type="number"
             min={1}
             unit="%"
-            value={defaultStopLossPct}
+            value={draft.defaultStopLossPct}
             onChange={(e) =>
-              setRisk({ defaultStopLossPct: Math.max(1, Number(e.target.value)) })
+              updateDraft({ defaultStopLossPct: Math.max(1, Number(e.target.value) || 1) })
             }
           />
           <LabeledInput
@@ -231,9 +275,9 @@ export function Controls() {
             type="number"
             min={1}
             unit="%"
-            value={defaultTakeProfitPct}
+            value={draft.defaultTakeProfitPct}
             onChange={(e) =>
-              setRisk({ defaultTakeProfitPct: Math.max(1, Number(e.target.value)) })
+              updateDraft({ defaultTakeProfitPct: Math.max(1, Number(e.target.value) || 1) })
             }
           />
         </div>
@@ -244,36 +288,53 @@ export function Controls() {
             SCREENING PRESET
           </span>
           <div className="grid grid-cols-3 gap-0 border border-[var(--border)]">
-            {PRESETS.map((p, idx) => (
-              <button
-                key={p.value}
-                type="button"
-                onClick={() => setRisk({ screeningPreset: p.value })}
-                className={cn(
-                  "h-8 text-[10px] font-medium uppercase tracking-[0.18em] transition-colors",
-                  idx > 0 && "border-l border-[var(--border)]",
-                  screeningPreset === p.value
-                    ? "bg-foreground text-background"
-                    : "bg-transparent text-foreground hover:bg-foreground/10",
-                )}
-                aria-pressed={screeningPreset === p.value}
-              >
-                {p.label}
-              </button>
-            ))}
+            {PRESETS.map((p, idx) => {
+              const active = draft.screeningPreset === p.value;
+              return (
+                <button
+                  key={p.value}
+                  type="button"
+                  onClick={() => updateDraft({ screeningPreset: p.value })}
+                  className={cn(
+                    "h-8 text-[10px] font-medium uppercase tracking-[0.18em] transition-colors",
+                    idx > 0 && "border-l border-[var(--border)]",
+                    active
+                      ? "bg-foreground text-background"
+                      : "bg-transparent text-foreground hover:bg-foreground/10",
+                  )}
+                  aria-pressed={active}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       </CardContent>
-      <CardFooter>
-        <span>HARD CAPS ENFORCED SERVER-SIDE</span>
-        <Button
-          variant="danger"
-          size="sm"
-          onClick={onEmergency}
-          aria-label="Emergency stop all trading"
-        >
-          ⚠ EMERGENCY STOP
-        </Button>
+      <CardFooter className="flex items-center justify-between gap-2">
+        <span className={cn("label-mono", !synced && "text-[var(--warning)]")}>
+          {synced ? "CONFIG SYNCED" : "UNSAVED CHANGES"}
+        </span>
+        <div className="flex items-center gap-2">
+          {!synced && (
+            <>
+              <Button variant="ghost" size="sm" onClick={onRevert}>
+                REVERT
+              </Button>
+              <Button variant="success" size="sm" onClick={onApplyConfig}>
+                APPLY CONFIG
+              </Button>
+            </>
+          )}
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={onEmergency}
+            aria-label="Emergency stop all trading"
+          >
+            ⚠ EMERGENCY STOP
+          </Button>
+        </div>
       </CardFooter>
     </Card>
   );
