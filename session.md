@@ -307,3 +307,28 @@ SOLANA_RPC_WS=wss://mainnet.helius-rpc.com/?api-key=<premium>
 - Agent left running overnight for learning data accumulation
 - User resting — will return with performance report
 
+---
+
+### ⚠️ DEPLOYMENT PITFALLS (JANGAN DIULANGI)
+
+**1. Next.js `PORT`, bukan `DASHBOARD_PORT`**
+- `DASHBOARD_PORT` = buat realtime server internal agent
+- `PORT` = buat Next.js HTTP server
+- Dashboard `.env`: `PORT=4000`
+
+**2. `git reset --hard` hapus `.next/` folder**
+- `.next` git-ignored → kena wipe
+- Wajib rebuild: `npx next build`
+
+**3. Jangan `fuser -k` blind di port shared**
+- `fuser -k 3000/tcp` → bunuh SEMUA proses di port 3000
+- Cek dulu: `lsof -i :3000`
+
+**4. Dashboard restart protocol (AMAN):**
+```bash
+cd ~/anton-terminal && git pull
+cd apps/dashboard
+npx next build
+PORT=4000 pm2 restart anton-dashboard
+```
+

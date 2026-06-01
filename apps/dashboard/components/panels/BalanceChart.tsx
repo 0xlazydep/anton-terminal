@@ -9,6 +9,7 @@ import {
   type Time,
 } from "lightweight-charts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SolIcon } from "@/components/ui/sol-icon";
 import { Badge } from "@/components/ui/badge";
 import { cn, fmtPct, fmtSol, isMockMode } from "@/lib/utils";
 import { getSocket } from "@/lib/socket";
@@ -230,12 +231,12 @@ export function BalanceChart() {
     <Card className="h-full">
       <CardHeader>
         <div className="flex items-center gap-3">
-          <CardTitle>BALANCE · SOL</CardTitle>
+          <CardTitle>BALANCE · <SolIcon className="inline h-4 w-4 -mt-0.5" /></CardTitle>
           <Badge variant="outline">EQUITY CURVE</Badge>
         </div>
         <div className="flex items-center gap-3 tabular-nums">
           <span className="text-xs font-semibold">
-            {last ? `${fmtSol(last.value)} SOL` : "—"}
+            {last ? <>{fmtSol(last.value)} <SolIcon className="inline h-3 w-3 -mt-0.5" /></> : "—"}
           </span>
           <span
             className={cn(

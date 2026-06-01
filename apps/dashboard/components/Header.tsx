@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useUI } from "@/store/ui";
 import { useRealizedPnl } from "@/hooks/use-positions";
+import { SolIcon } from "@/components/ui/sol-icon";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { cn, fmtPct, fmtSol, fmtTime } from "@/lib/utils";
@@ -67,7 +68,7 @@ export function Header() {
 
       {/* SOL balance */}
       <div className="hidden md:flex items-center gap-2">
-        <span className="label-mono">SOL BAL</span>
+        <SolIcon className="h-4 w-4" />
         <span className="text-xs font-semibold tabular-nums">
           {fmtSol(solBalance)}
         </span>
@@ -85,7 +86,7 @@ export function Header() {
           )}
         >
           {up ? "+" : ""}
-          {fmtSol(realizedPnlSol)} SOL · {fmtPct(realizedPnlPct)}
+          {fmtSol(realizedPnlSol)} <SolIcon className="inline h-3 w-3 -mt-0.5" /> · {fmtPct(realizedPnlPct)}
         </span>
         <span
           className={cn(

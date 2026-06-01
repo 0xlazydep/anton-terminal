@@ -19,6 +19,7 @@ import {
   fmtSol,
   fmtUsd,
 } from "@/lib/utils";
+import { SolIcon } from "@/components/ui/sol-icon";
 
 export function Positions() {
   const { positions, totalPnlSol, totalPnlPct, totalSizeSol } = usePositions();
@@ -61,12 +62,12 @@ export function Positions() {
               )}
             >
               {pnlUp ? "+" : ""}
-              {fmtSol(pnlSol)} SOL · {fmtPct(pnlPct)}
+              {fmtSol(pnlSol)} <SolIcon className="inline h-3 w-3 -mt-0.5" /> · {fmtPct(pnlPct)}
             </span>
             {showActive && (
               <>
-                <span className="label-mono ml-4">DEPLOYED</span>
-                <span className="text-xs font-semibold">{fmtSol(totalSizeSol)} SOL</span>
+                <span className="label-mono ml-4">POSITION</span>
+                <span className="text-xs font-semibold">{fmtSol(totalSizeSol)} <SolIcon className="inline h-3 w-3 -mt-0.5" /></span>
               </>
             )}
           </div>
@@ -84,7 +85,7 @@ export function Positions() {
                 <TH className="text-right">PRICE</TH>
                 <TH className="text-right">MC</TH>
                 <TH className="text-right">PnL %</TH>
-                <TH className="text-right">PnL SOL</TH>
+                <TH className="text-right">PnL <SolIcon className="inline h-3 w-3" /></TH>
                 <TH className="text-right">SL/TP</TH>
                 <TH className="text-right">HOLD</TH>
                 <TH className="text-right">MODE</TH>
@@ -161,7 +162,7 @@ export function Positions() {
                 <TH className="text-right">ENTRY</TH>
                 <TH className="text-right">CLOSE</TH>
                 <TH className="text-right">PnL %</TH>
-                <TH className="text-right">PnL SOL</TH>
+                <TH className="text-right">PnL <SolIcon className="inline h-3 w-3" /></TH>
                 <TH className="text-right">HOLD</TH>
                 <TH>REASON</TH>
               </TR>
