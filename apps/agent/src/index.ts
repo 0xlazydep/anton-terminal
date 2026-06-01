@@ -402,9 +402,12 @@ async function bootstrap(): Promise<void> {
   }
 
   let priceFeed: HeliusPriceFeed | undefined;
-  if (env.SOLANA_RPC_URL) {
+  const wsUrl = process.env.SOLANA_RPC_WS?.trim() || env.SOLANA_RPC_URL;
+  if (wsUrl) {
     try {
-      priceFeed = new HeliusPriceFeed(env.SOLANA_RPC_URL);
+      // Ensure wss:// prefix for WebSocket
+      const finalUrl = wsUrl.startsWith("wss://") ? wsUrl : wsUrl.replace("https://", "wss://");
+      priceFeed = new HeliusPriceFeed(finalUrl);
       log("helius ws: real-time price feed active");
     } catch {
       log("helius ws: unavailable, falling back to dex screener polling");
