@@ -9,14 +9,14 @@ export interface MintLinkProps {
 }
 
 /**
- * External link to DexScreener (token) or Solscan (wallet).
+ * External link to GMGN (token) or Solscan (wallet).
  * Renders truncated mint via fmtMint; full mint exposed via `title`.
  */
 export function MintLink({ mint, kind = "token", className }: MintLinkProps) {
   const href =
     kind === "wallet"
       ? `https://solscan.io/account/${mint}`
-      : `https://dexscreener.com/solana/${mint}`;
+      : `https://gmgn.ai/sol/token/${mint}`;
   return (
     <a
       href={href}
