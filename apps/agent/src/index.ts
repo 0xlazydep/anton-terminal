@@ -252,14 +252,17 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
       },
     );
 
-    publishDecision(bus, {
-      mint: decision.token,
-      symbol: decision.symbol,
-      action: decision.action,
-      conviction: decision.confidence,
-      sizeSol: decision.size_sol,
-      reason: decision.reason,
-    });
+    // Only publish actionable decisions (BUY/EXIT) — SKIP/HOLD are noise
+    if (decision.action === "BUY" || decision.action === "EXIT") {
+      publishDecision(bus, {
+        mint: decision.token,
+        symbol: decision.symbol,
+        action: decision.action,
+        conviction: decision.confidence,
+        sizeSol: decision.size_sol,
+        reason: decision.reason,
+      });
+    }
 
     if (decision.action === "BUY" && decision.size_sol) {
       if (dailyLossExceeded) {
