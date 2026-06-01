@@ -112,7 +112,7 @@ export function Screening() {
           </THead>
           <TBody>
             {rows.map((r, i) => (
-              <TR key={`${r.mint}-${r.ts ?? "na"}-${i}`}>
+              <TR key={`${r.mint}-${r.ts ?? "na"}-${i}`} className="animate-slide-in">
                 <TD className="text-[var(--muted-foreground)]">
                   {r.ts ? fmtTime(r.ts) : "—"}
                 </TD>

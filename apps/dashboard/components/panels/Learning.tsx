@@ -70,7 +70,7 @@ export function Learning() {
               lessons.map((l, i) => (
                 <div
                   key={i}
-                  className="flex items-start gap-2 border border-[var(--border)] p-2 mb-1 last:mb-0"
+                  className="flex items-start gap-2 border border-[var(--border)] p-2 mb-1 last:mb-0 animate-slide-in"
                 >
                   <SeverityBadge severity={l.severity} />
                   <span className="text-[10px] text-foreground leading-relaxed break-words">

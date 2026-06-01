@@ -69,7 +69,7 @@ function Row({ entry }: { entry: ReasoningEntry }) {
   if (entry.kind === "step") {
     const { step, thought, confidence, ts } = entry.data;
     return (
-      <div className="grid grid-cols-[56px_42px_auto_1fr] items-start gap-2 px-3 py-1 text-[11px] leading-relaxed">
+      <div className="grid grid-cols-[56px_42px_auto_1fr] items-start gap-2 px-3 py-1 text-[11px] leading-relaxed animate-slide-in">
         <span className="tabular-nums text-[var(--muted-foreground)]">
           {fmtTime(ts)}
         </span>
@@ -95,7 +95,7 @@ function Row({ entry }: { entry: ReasoningEntry }) {
   return (
     <div
       className={cn(
-        "grid grid-cols-[56px_42px_auto_1fr] items-start gap-2 border-l-2 px-3 py-1.5 text-[11px] leading-relaxed bg-foreground/[0.04]",
+        "grid grid-cols-[56px_42px_auto_1fr] items-start gap-2 border-l-2 px-3 py-1.5 text-[11px] leading-relaxed bg-foreground/[0.04] animate-slide-in",
         action === "BUY"
           ? "border-[var(--profit)]"
           : action === "SELL" || action === "SET_SL"
