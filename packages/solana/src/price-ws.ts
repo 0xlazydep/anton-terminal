@@ -1,9 +1,8 @@
 /**
- * Helius WebSocket real-time price feed.
+ * Helius WebSocket + Jupiter dual price feed.
  *
- * Subscribes to transaction logs mentioning a token mint, then queries Jupiter
- * for the current price on each on-chain activity. Much faster than polling
- * DexScreener — reacts to swaps in < 500ms vs 3-12s poll intervals.
+ * - WebSocket logsSubscribe: instant price update on any on-chain swap (< 500ms)
+ * - Jupiter API poll every 1s: keepalive when no swap activity (never > 1s stale)
  *
  * Falls back to DexScreener polling when WebSocket is unavailable.
  */
@@ -18,13 +17,13 @@ interface ActiveSub {
   callback: PriceCallback;
   lastPrice: number;
   lastUpdate: number;
+  pollTimer: ReturnType<typeof setInterval> | null;
 }
 
 export class HeliusPriceFeed {
   private ws: WebSocket | null = null;
   private subs = new Map<number, ActiveSub>();
   private nextId = 1;
-  private pendingRequests = new Map<number, { resolve: (id: number) => void; reject: (err: Error) => void }>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly wsUrl: string;
   private connected = false;
@@ -40,7 +39,6 @@ export class HeliusPriceFeed {
 
       this.ws.onopen = () => {
         this.connected = true;
-        // Re-subscribe all active subs after reconnect
         for (const sub of this.subs.values()) {
           this.doSubscribe(sub.mint, sub.subId);
         }
@@ -56,9 +54,7 @@ export class HeliusPriceFeed {
         this.scheduleReconnect();
       };
 
-      this.ws.onerror = () => {
-        // onclose will fire after this
-      };
+      this.ws.onerror = () => {};
     } catch {
       this.scheduleReconnect();
     }
@@ -73,35 +69,16 @@ export class HeliusPriceFeed {
   }
 
   private handleMessage(data: { id?: number; result?: unknown; error?: { message: string } }): void {
-    if (data.id !== undefined) {
-      const pending = this.pendingRequests.get(data.id);
-      if (pending) {
-        this.pendingRequests.delete(data.id);
-        if (data.error) {
-          pending.reject(new Error(data.error.message));
-        } else {
-          pending.resolve(data.result as number);
-        }
-      }
-      return;
-    }
+    if (data.id !== undefined) return;
 
-    // Notification: logsSubscribe result — a swap/tx mentioned our mint
-    const params = (data as { params?: { result?: { value?: { signature: string } } } }).params;
-    if (!params?.result?.value?.signature) return;
-
-    const sig = params.result.value.signature;
-    // Find matching subscription and update price
-    // logsSubscribe notifications include the subscription ID in params.subscription
     const subId = (data as { params?: { subscription: number } }).params?.subscription;
     if (!subId) return;
 
     const sub = this.subs.get(subId);
     if (!sub) return;
 
-    // Debounce: skip if last update was < 200ms ago
     const now = Date.now();
-    if (now - sub.lastUpdate < 200) return;
+    if (now - sub.lastUpdate < 300) return;
     sub.lastUpdate = now;
 
     this.fetchAndUpdate(sub);
@@ -129,7 +106,7 @@ export class HeliusPriceFeed {
         sub.callback(priceUsd, marketCapUsd);
       }
     } catch {
-      // Non-fatal, wait for next log notification
+      // Non-fatal
     }
   }
 
@@ -152,7 +129,6 @@ export class HeliusPriceFeed {
     });
   }
 
-  /** Subscribe to a token's price. Returns sub ID for unsubscribe. */
   async subscribe(mint: string, callback: PriceCallback): Promise<number> {
     const subId = this.nextId++;
     const sub: ActiveSub = {
@@ -161,24 +137,36 @@ export class HeliusPriceFeed {
       callback,
       lastPrice: 0,
       lastUpdate: 0,
+      pollTimer: null,
     };
     this.subs.set(subId, sub);
 
-    // Fetch initial price immediately
+    // Initial price fetch
     await this.fetchAndUpdate(sub);
 
+    // WS subscription for instant swap events
     if (this.connected) {
       this.doSubscribe(mint, subId);
     }
 
+    // Jupiter poll every 1s as keepalive
+    sub.pollTimer = setInterval(() => {
+      if (this.subs.has(subId)) {
+        this.fetchAndUpdate(sub);
+      } else {
+        clearInterval(sub.pollTimer!);
+      }
+    }, 1000);
+
     return subId;
   }
 
-  /** Unsubscribe from a token's price feed. */
   unsubscribe(subId: number): void {
     const sub = this.subs.get(subId);
     if (!sub) return;
     this.subs.delete(subId);
+
+    if (sub.pollTimer) clearInterval(sub.pollTimer);
 
     if (this.connected) {
       const id = this.nextId++;
@@ -191,16 +179,17 @@ export class HeliusPriceFeed {
     }
   }
 
-  /** Check if WebSocket is connected. */
   get isConnected(): boolean {
     return this.connected;
   }
 
-  /** Close the feed and all subscriptions. */
   close(): void {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    for (const sub of this.subs.values()) {
+      if (sub.pollTimer) clearInterval(sub.pollTimer);
     }
     this.subs.clear();
     this.ws?.close();
