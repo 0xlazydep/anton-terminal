@@ -59,12 +59,12 @@ async function reflectWithLLM(
       messages: [
         {
           role: "system",
-          content: "You are a trading analyst extracting lessons from closed trades. Output ONLY the lesson text — no JSON, no markdown, no preamble. One sentence.",
+          content: "You are a trading analyst extracting lessons from closed trades. Output ONE complete, actionable lesson. Start directly with the lesson — no labels, no bullets, no JSON. Must be a full grammatical sentence that ends with a period. Maximum 2 sentences.",
         },
         { role: "user", content: prompt },
       ],
       temperature: 0.3,
-      max_tokens: 300,
+      max_tokens: 500,
     });
 
     return msg.content?.trim() ?? `${isWin ? "Winning" : "Losing"} trade on ${trade.symbol ?? trade.mint.slice(0, 8)}`;
