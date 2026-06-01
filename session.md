@@ -302,7 +302,8 @@ SOLANA_RPC_WS=wss://mainnet.helius-rpc.com/?api-key=<premium>
 - All trading fixes + learning system + WS real-time price feed deployed on VPS
 - Agent running with WR ~80% (from 15% baseline)
 - Realized PnL: +2.8% (from -12% baseline)
-- Dashboard: LEARNING panel, footer with uptime/ping, config behind password gate, mode auto-sync
+- Dashboard: LEARNING panel (horizontal: recent lessons | pattern stats), footer with uptime/ping, config behind password gate, mode auto-sync, equity baseline from wallet
+- 18 trades so far: hold_time/medium 57% WR +11.3%, hold_time/fast 32% WR -0.1%
 - Agent left running overnight for learning data accumulation
-- Balance chart baseline fixed (wallet balance, not hardcoded 10 SOL)
+- User resting — will return with performance report
 

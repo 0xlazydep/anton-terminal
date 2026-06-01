@@ -103,7 +103,7 @@ export function Learning() {
                   </tr>
                 </thead>
                 <tbody>
-                  {stats.slice(0, 10).map((s, i) => (
+                  {stats.slice(0, 20).map((s, i) => (
                     <tr
                       key={i}
                       className={cn(

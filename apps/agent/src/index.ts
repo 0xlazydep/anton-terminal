@@ -140,8 +140,9 @@ async function buildStateSnapshot(book: PositionBook): Promise<StateSnapshotEven
   if (db) {
     try {
       const { getRecentLessons, getPatternStats } = await import("@anton/data");
-      result.recentLessons = await getRecentLessons(db, 5);
-      result.patternStats = await getPatternStats(db);
+      result.recentLessons = await getRecentLessons(db, 20);
+      const stats = await getPatternStats(db);
+      result.patternStats = stats;
     } catch {
       // Non-fatal — return snapshot without learning data
     }
