@@ -1,4 +1,9 @@
+"use client";
+
+import { useState } from "react";
 import { Header } from "@/components/Header";
+import { Footer } from "@/components/Footer";
+import { ConfigGate } from "@/components/ConfigGate";
 import { RealtimeBoot } from "@/components/RealtimeBoot";
 import { BalanceChart } from "@/components/panels/BalanceChart";
 import { Controls } from "@/components/panels/Controls";
@@ -7,15 +12,22 @@ import { ReasoningLog } from "@/components/panels/ReasoningLog";
 import { Screening } from "@/components/panels/Screening";
 import { SmartWalletFeed } from "@/components/panels/SmartWalletFeed";
 
-/**
- * Dashboard shell — brutalist 12-column grid.
- *
- *   ROW 1: [ BalanceChart · 7 ]  [ ReasoningLog · 5, spans 2 rows ]
- *   ROW 2: [ Positions   · 7 ]
- *   ROW 3: [ Screening   · 7 ]  [ SmartWalletFeed · 5 ]
- *   ROW 4: [ Controls · 12 ]
- */
 export default function DashboardPage() {
+  const [configOpen, setConfigOpen] = useState(false);
+  const [configUnlocked, setConfigUnlocked] = useState(false);
+
+  const onConfigToggle = () => {
+    if (configUnlocked) {
+      setConfigOpen((prev) => !prev);
+    } else {
+      setConfigOpen(true);
+    }
+  };
+
+  const onUnlock = () => {
+    setConfigUnlocked(true);
+  };
+
   return (
     <div className="flex min-h-dvh flex-col bg-background text-foreground">
       <RealtimeBoot />
@@ -38,11 +50,21 @@ export default function DashboardPage() {
           <div className="lg:col-span-5 h-[320px]">
             <SmartWalletFeed />
           </div>
-          <div className="lg:col-span-12">
-            <Controls />
-          </div>
+          {configOpen && configUnlocked && (
+            <div className="lg:col-span-12">
+              <Controls />
+            </div>
+          )}
         </div>
       </main>
+
+      <Footer onConfigToggle={onConfigToggle} />
+
+      <ConfigGate
+        open={configOpen && !configUnlocked}
+        onUnlock={onUnlock}
+        onClose={() => setConfigOpen(false)}
+      />
     </div>
   );
 }
