@@ -303,11 +303,15 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
   const dumpRatio = dumping / total;
 
   let regime: "bullish" | "sideways" | "bearish";
-  if (pumpRatio > 0.4 && dumpRatio < 0.3) regime = "bullish";
+  if (pumpRatio > 0.4 && dumpRatio < 0.3) {
+    regime = "bullish";
+    log(`🐂 MEME MARKET BULLISH · ${pumping}P/${dumping}D of ${total}`);
+  }
   else if (dumpRatio > 0.5 || (pumpRatio < 0.15 && total >= 6)) regime = "bearish";
   else regime = "sideways";
 
   if (regime === "bearish") {
+    log(`🐻 MEME MARKET BEARISH · ${pumping}P/${dumping}D of ${total} tokens — skipping entries`);
     reason(bus, `🐻 MEME MARKET BEARISH · ${pumping}P/${dumping}D of ${total} tokens — skipping entries, waiting for healthier conditions`, 0.9);
     status(bus, "watching");
     return;
@@ -322,6 +326,7 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
   }
 
   if (regime === "sideways") {
+    log(`↔️ MEME MARKET SIDEWAYS · ${pumping}P/${dumping}D of ${total}`);
     reason(bus, `↔️ MEME MARKET SIDEWAYS · ${pumping}P/${dumping}D of ${total} tokens — high conviction only`, 0.6);
   }
   const decidedMints = new Set<string>();
