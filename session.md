@@ -455,3 +455,66 @@ PORT=4000 pm2 restart anton-dashboard
 ### Last Action
 - Fee tracking, risk-adjusted sizing, fee-efficiency gate, and dashboard fee panel all built and compiled clean.
 - Agent ready for restart: `pm2 restart anton-agent && cd apps/dashboard && npx next build && PORT=4000 pm2 restart anton-dashboard`
+
+---
+
+## 2026-06-03 (Net-Profit Gating — Audit Fix)
+
+### Context
+Audit revealed the previous fee-efficiency work was 3/5 "looked done but not wired":
+- Expected profit vs cost → only logged, no reject
+- Min edge → only logged, no reject
+- Dynamic sizing by balance → `adjustedMaxSizeSol` computed but DISCARDED (sizing still clamped to config.maxSpendSol 0.15)
+- Trade frequency control → WORKING (maxConcurrent + conviction)
+- Fee-to-profit first-class → `minEntryScore` never used to reject
+
+### 41. Expected-Value Gate (poin 1 & 2 — now ACTUALLY rejects)
+**Fix**: `packages/agent/src/scoring.ts`
+- `expectedValueGate()` — computes net EV: `p×(size×TP%) − (1−p)×(size×SL%) − (fee×2 + slippage×2)`. Returns `pass: false` when EV ≤ 0.
+- `winProbabilityFor()` — derives win probability from historical pattern win-rate (not raw conviction). Losing 20%WR pattern → p≈0.36; winning 80%WR → p≈0.72.
+- `packages/shared-types/src/decisions.ts` — TradeDecision gains `entry_score`, `expected_value_sol`, `expected_cost_sol`.
+- `packages/agent/src/decide.ts` — both DeepSeek + rule paths compute & return EV; `DecideContext` gains `maxSizeSol` + `feeContext`.
+- `apps/agent/src/index.ts` — new reject gate: `expected_value_sol ≤ 0` → skip with "Negative expected value — expected cost exceeds edge".
+
+### 42. Dynamic Sizing by Balance (poin 3 — was DISCARDED, now wired)
+**Fix**: `packages/agent/src/scoring.ts`
+- `riskAdjustedSize()` gains `maxSizeOverride` — clamps to balance ceiling instead of config.maxSpendSol.
+- `decide.ts` passes `ctx.maxSizeSol` (= gate's `adjustedMaxSizeSol`) into sizing.
+- Verified: @2.1 SOL clamps to 0.126 (was 0.15), @0.8 SOL clamps to 0.08.
+
+### 43. Entry-Score Reject Gate (poin 5 — minEntryScore now used)
+**Fix**: `apps/agent/src/index.ts` — new reject gate: `entry_score < efficiencyGate.minEntryScore` → skip.
+
+### Verification (node script, all passed)
+- EV: weak edge + high fee (TP20/SL15/p40%/fee0.02) → EV −0.047 → REJECT ✓
+- EV: strong (TP50/SL10/p70%) → EV +0.0265 → ENTER ✓
+- Balance ceiling: @2.1 → 0.126, @0.8 → 0.08 ✓
+- winProbability: losing pattern 20%WR → 0.36, winning 80%WR → 0.72 ✓
+- End-to-end: losing pattern → p=0.34 → EV −0.018 → REJECT ✓
+- Full monorepo build (11 pkg + dashboard): clean
+
+### DB Migration
+- **NONE NEEDED.** `recordTrade()` uses existing `trades` table columns (fee_sol, metadata, slippage_bps, tx_signature, route) already in migration `0000_flashy_dragon_man.sql`. No schema change this session.
+
+### Deploy Notes
+- **VPS**: `ssh root@161.97.173.157` → `cd ~/anton-terminal`
+- New files to commit: `packages/agent/src/scoring.ts`, `packages/data/src/queries/trades.ts`, `apps/dashboard/components/panels/FeeBreakdown.tsx`
+- ⚠️ VPS env has `ANTON_MAX_CONCURRENT_POSITIONS=50` — balance gate caps to min(2, 50)=2 for ~2 SOL account, so gate still limits correctly, but consider lowering this stale value.
+- ⚠️ EV gate only bites after fee history accumulates (empty DB → cost 0 → passes). Full protection active after a few real trades.
+- **Recommended**: deploy to dry-run first, watch reasoning log for gate messages, then switch ANTON_MODE=live.
+
+### Build order (VPS)
+```bash
+cd ~/anton-terminal && git pull
+pnpm install
+pnpm --filter @anton/shared-types build
+pnpm --filter @anton/config build
+pnpm --filter @anton/data build
+pnpm --filter @anton/solana build
+pnpm --filter @anton/agent build
+pnpm --filter ./apps/agent build
+cd apps/dashboard && npx next build && cd ../..
+pm2 restart anton-agent
+PORT=4000 pm2 restart anton-dashboard
+pm2 logs anton-agent --lines 50
+```
