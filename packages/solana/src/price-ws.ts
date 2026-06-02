@@ -83,7 +83,7 @@ export class HeliusPriceFeed {
     if (!sub) return;
 
     const now = Date.now();
-    if (now - sub.lastUpdate < 300) return;
+    if (now - sub.lastUpdate < 80) return;
     sub.lastUpdate = now;
 
     this.fetchAndUpdate(sub);
