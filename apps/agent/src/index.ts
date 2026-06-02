@@ -484,18 +484,6 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
       },
     );
 
-    // Only publish actionable decisions (BUY/EXIT) — SKIP/HOLD are noise
-    if (decision.action === "BUY" || decision.action === "EXIT") {
-      publishDecision(bus, {
-        mint: decision.token,
-        symbol: decision.symbol,
-        action: decision.action,
-        conviction: decision.confidence,
-        sizeSol: decision.size_sol,
-        reason: decision.reason,
-      });
-    }
-
     // Update screening row with LLM decision (BUY or SKIP)
     publishScreening(bus, {
       ...r.screeningEvt,
@@ -534,6 +522,14 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
         );
         if (opened) {
           tradesToday++;
+          publishDecision(bus, {
+            mint: decision.token,
+            symbol: decision.symbol,
+            action: decision.action,
+            conviction: decision.confidence,
+            sizeSol: decision.size_sol,
+            reason: decision.reason,
+          });
           reason(bus, `Opened ${config.mode} position ${decision.symbol ?? ""} · ${decision.size_sol} SOL (${tradesToday}/${MAX_TRADES_PER_DAY} today)`, decision.confidence);
         } else {
           reason(bus, `⛔ Swap failed for ${decision.symbol ?? ""} — check liquidity or pool availability`, 0.6);
