@@ -665,7 +665,7 @@ async function bootstrap(): Promise<void> {
             const wallet = loadHotWallet(env.SOLANA_PRIVATE_KEY!);
             const connection = createConnection(env.SOLANA_RPC_URL!);
             const lamports = Math.floor(solAmount * LAMPORTS_PER_SOL);
-            const slippageBps = Number(process.env.JUPITER_SLIPPAGE_BPS ?? 2500);
+            const slippageBps = Number(process.env.JUPITER_SLIPPAGE_BPS ?? 100);
             const result = await swapBuy({
               connection,
               wallet,
@@ -686,7 +686,7 @@ async function bootstrap(): Promise<void> {
             if (!balance || balance.rawAmount === "0") {
               throw new Error(`no token balance for ${tokenMint.slice(0, 8)}`);
             }
-            const slippageBps = Number(process.env.JUPITER_SLIPPAGE_BPS ?? 2500);
+            const slippageBps = Number(process.env.JUPITER_SLIPPAGE_BPS ?? 100);
             const result = await swapSell(connection, wallet, tokenMint, balance.rawAmount, slippageBps);
             log(`swap SELL ${tokenMint.slice(0, 8)}... ${balance.uiAmount} tokens → ${result.txSignature.slice(0, 16)}...`);
             return { txSignature: result.txSignature };
