@@ -293,32 +293,24 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
   });
 
   // ── Meme Coin Market Regime ──
-  // Health gauged from agent's own recent closed trades (last 2h): how many
-  // sustained (TP/profit) vs dumped (SL). This reflects the LIVE meme ecosystem,
-  // not BTC/SOL. Combined with current candidate momentum distribution.
-  const recentClosed = book.snapshotState().history.filter(
-    (h) => h.closedAt && Date.now() - h.closedAt < 7200_000,
-  );
-  const sustainCount = recentClosed.filter((h) => h.pnlSol > 0).length;
-  const dumpCount = recentClosed.filter((h) => h.pnlPct <= -10).length;
-  const sustainRate = recentClosed.length >= 5
-    ? sustainCount / recentClosed.length
-    : -1; // cold start / insufficient data
-
+  // Primary: LIVE ecosystem data from all screened candidates (not BTC/SOL).
+  // How many tokens pumping vs dumping RIGHT NOW across the meme ecosystem?
   const allMomentum = screened
     .map((s) => s.candidate.market.momentum ?? 0)
     .filter((m) => m !== 0);
-  const bullishRatio = allMomentum.length > 0
-    ? allMomentum.filter((m) => m > 0.02).length / allMomentum.length
-    : 0.5;
+  const pumping = allMomentum.filter((m) => m > 0.03).length;
+  const dumping = allMomentum.filter((m) => m < -0.03).length;
+  const total = allMomentum.length || 1;
+  const pumpRatio = pumping / total;
+  const dumpRatio = dumping / total;
 
   let regime: "bullish" | "sideways" | "bearish";
-  if (sustainRate >= 0.45 && bullishRatio > 0.4) regime = "bullish";
-  else if (sustainRate < 0 || sustainRate < 0.25 || (dumpCount >= 6 && sustainRate < 0.35)) regime = "bearish";
+  if (pumpRatio > 0.4 && dumpRatio < 0.3) regime = "bullish";
+  else if (dumpRatio > 0.5 || (pumpRatio < 0.15 && total >= 6)) regime = "bearish";
   else regime = "sideways";
 
   if (regime === "bearish") {
-    reason(bus, `🐻 MEME MARKET BEARISH · sustain ${(sustainRate * 100).toFixed(0)}% · ${dumpCount} dumps/2h — skipping entries, waiting for healthier conditions`, 0.9);
+    reason(bus, `🐻 MEME MARKET BEARISH · ${pumping}P/${dumping}D of ${total} tokens — skipping entries, waiting for healthier conditions`, 0.9);
     status(bus, "watching");
     return;
   }
@@ -332,7 +324,7 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
   }
 
   if (regime === "sideways") {
-    reason(bus, `↔️ Market regime: SIDEWAYS (${(bullishRatio * 100).toFixed(0)}% bullish) — high conviction only`, 0.6);
+    reason(bus, `↔️ MEME MARKET SIDEWAYS · ${pumping}P/${dumping}D of ${total} tokens — high conviction only`, 0.6);
   }
   const decidedMints = new Set<string>();
 
