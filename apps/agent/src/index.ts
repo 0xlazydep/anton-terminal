@@ -174,7 +174,8 @@ async function buildStateSnapshot(book: PositionBook): Promise<StateSnapshotEven
 
 async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekClient): Promise<void> {
   status(bus, "scanning");
-  const { candidates, source } = await fetchCandidates(12);
+  const { candidates: rawCandidates, source } = await fetchCandidates(12);
+  const candidates = rawCandidates.filter((c) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(c.mint));
   reason(bus, `Scanning sources · ${candidates.length} candidates (${source})`, 0.5);
 
   // Filter out mints recently closed (5 min cooldown) + already active
@@ -237,9 +238,11 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
     })
     .slice(0, 4);
 
-  // Watchlist: update for SAFE candidates only (others aren't eligible)
+  // Watchlist: update for SAFE candidates only — skip non-Solana addresses
+  const SOL_MINT_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
   for (const s of safe) {
     const c = s.candidate;
+    if (!SOL_MINT_REGEX.test(c.mint)) continue;
     const existing = watchlistCounts.get(c.mint);
     watchlistCounts.set(c.mint, {
       count: (existing?.count ?? 0) + 1,

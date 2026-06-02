@@ -176,13 +176,11 @@ export function Positions() {
               <TR>
                 <TH>SYM</TH>
                 <TH>MINT</TH>
-                <TH className="text-right">PRICE</TH>
-                <TH className="text-right">MC</TH>
                 <TH className="text-right">LIQ</TH>
-                <TH className="text-right">5M %</TH>
+                <TH className="text-right">MOM</TH>
                 <TH className="text-right">AGE</TH>
                 <TH className="text-right">SCORE</TH>
-                <TH>FLAGS</TH>
+                <TH>CYCLE</TH>
               </TR>
             </THead>
             <TBody>
@@ -192,20 +190,16 @@ export function Positions() {
                   <TD className="text-[var(--muted-foreground)]">
                     <MintLink mint={w.mint} />
                   </TD>
-                  <TD className="text-right">—</TD>
-                  <TD className="text-right">—</TD>
                   <TD className="text-right">{w.liquidityUsd != null ? `$${(w.liquidityUsd / 1000).toFixed(1)}K` : "—"}</TD>
-                  <TD className="text-right">{w.momentum ? `${(w.momentum*100).toFixed(1)}%` : "—"}</TD>
+                  <TD className="text-right">{w.momentum !== 0 ? `${(w.momentum*100).toFixed(1)}%` : "—"}</TD>
                   <TD className="text-right">{w.pairAgeSec != null ? `${Math.floor(w.pairAgeSec / 60)}m` : "—"}</TD>
                   <TD className="text-right">{w.score}</TD>
-                  <TD className="space-x-1">
-                    <Badge variant="outline" className="text-[8px]">CYC {w.cycleCount}</Badge>
-                  </TD>
+                  <TD><Badge variant="outline" className="text-[8px]">CYC {w.cycleCount}</Badge></TD>
                 </TR>
               ))}
               {watchlist.length === 0 && (
                 <TR>
-                  <TD colSpan={9} className="py-6 text-center text-[var(--muted-foreground)] uppercase tracking-[0.16em] text-[10px]">
+                  <TD colSpan={7} className="py-6 text-center text-[var(--muted-foreground)] uppercase tracking-[0.16em] text-[10px]">
                     NO TOKENS ON WATCHLIST
                   </TD>
                 </TR>
