@@ -11,6 +11,8 @@ import {
   usePositionHistory,
   useRealizedPnl,
 } from "@/hooks/use-positions";
+import { useQuery } from "@tanstack/react-query";
+import type { ScreeningResultEvent } from "@anton/shared-types";
 import {
   cn,
   fmtHold,
@@ -81,6 +83,14 @@ export function Positions() {
   const [tab, setTab] = useState("active");
   const now = Date.now();
 
+  // Watchlist = screened tokens with no LLM decision yet
+  const { data: screening } = useQuery<ScreeningResultEvent[]>({
+    queryKey: ["screening"],
+    initialData: [],
+    queryFn: async () => [],
+  });
+  const watchlist = (screening ?? []).filter((r) => r.verdict === "SAFE" && r.llmAction === undefined).slice(0, 10);
+
   const showActive = tab === "active";
   const pnlSol = showActive ? totalPnlSol : realizedPnlSol;
   const pnlPct = showActive ? totalPnlPct : realizedPnlPct;
@@ -93,9 +103,15 @@ export function Positions() {
           <TabsList className="border-b-0">
             <TabsTrigger value="active">
               ACTIVE
-              <Badge variant="outline" className="ml-2">
-                {positions.length}
-              </Badge>
+              <Badge variant="outline" className="ml-2">{positions.length}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="watchlist">
+              WATCH
+              <Badge variant="outline" className="ml-2">{watchlist.length}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="history">
+              HISTORY
+              <Badge variant="outline" className="ml-2">{history.length}</Badge>
             </TabsTrigger>
             <TabsTrigger value="history">
               HISTORY
@@ -155,6 +171,52 @@ export function Positions() {
                     className="py-6 text-center text-[var(--muted-foreground)] uppercase tracking-[0.16em] text-[10px]"
                   >
                     NO OPEN POSITIONS
+                  </TD>
+                </TR>
+              )}
+            </TBody>
+          </Table>
+        </TabsContent>
+
+        <TabsContent value="watchlist" className="min-h-0 flex-1 overflow-auto pt-0">
+          <Table>
+            <THead>
+              <TR>
+                <TH>SYM</TH>
+                <TH>MINT</TH>
+                <TH className="text-right">PRICE</TH>
+                <TH className="text-right">MC</TH>
+                <TH className="text-right">LIQ</TH>
+                <TH className="text-right">5M %</TH>
+                <TH className="text-right">AGE</TH>
+                <TH className="text-right">SCORE</TH>
+                <TH>FLAGS</TH>
+              </TR>
+            </THead>
+            <TBody>
+              {watchlist.map((w, i) => (
+                <TR key={`watch-${w.mint}-${i}`} className="animate-slide-in">
+                  <TD className="font-semibold">{w.symbol ?? "—"}</TD>
+                  <TD className="text-[var(--muted-foreground)]">
+                    <MintLink mint={w.mint} />
+                  </TD>
+                  <TD className="text-right">—</TD>
+                  <TD className="text-right">—</TD>
+                  <TD className="text-right">{w.liquidityUsd != null ? `$${(w.liquidityUsd / 1000).toFixed(1)}K` : "—"}</TD>
+                  <TD className="text-right">—</TD>
+                  <TD className="text-right">{w.pairAgeSec != null ? `${Math.floor(w.pairAgeSec / 60)}m` : "—"}</TD>
+                  <TD className="text-right">{w.score}</TD>
+                  <TD className="space-x-1">
+                    {w.flags.slice(0, 2).map((f) => (
+                      <Badge key={f} variant="outline" className="text-[8px]">{f}</Badge>
+                    ))}
+                  </TD>
+                </TR>
+              ))}
+              {watchlist.length === 0 && (
+                <TR>
+                  <TD colSpan={9} className="py-6 text-center text-[var(--muted-foreground)] uppercase tracking-[0.16em] text-[10px]">
+                    NO TOKENS ON WATCHLIST
                   </TD>
                 </TR>
               )}

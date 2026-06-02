@@ -100,6 +100,7 @@ const balanceHistory: BalancePointSnapshot[] = [];
 let lastWalletBalance = STARTING_SOL;
 const reflectedPositionIds = new Set<string>();
 const recentlyClosedMints = new Map<string, { closedAt: number; wasProfit: boolean }>();
+const watchlistCounts = new Map<string, number>(); // mint → cycles seen
 let db: Database | undefined;
 let walletIntel: WalletIntel | undefined;
 
@@ -224,6 +225,53 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
     })
     .slice(0, 4);
 
+  // Watchlist: update cycle counts for all candidates (seen = sustained interest)
+  for (const c of candidates) {
+    watchlistCounts.set(c.mint, (watchlistCounts.get(c.mint) ?? 0) + 1);
+  }
+  // Cleanup old counts periodically
+  if (watchlistCounts.size > 500) {
+    for (const [mint, count] of watchlistCounts) {
+      if (count <= 3) watchlistCounts.delete(mint);
+    }
+  }
+
+  // Only allow BUY on tokens seen 2+ cycles (anti-FOMO)
+  // Track peak momentum — enter on pullback from peak (not FOMO top)
+  const peakMomentum = new Map<string, number>();
+  const eligible = safe.filter((s) => {
+    const count = watchlistCounts.get(s.candidate.mint) ?? 0;
+    const mom = s.candidate.market.momentum ?? 0;
+    const prevPeak = peakMomentum.get(s.candidate.mint) ?? 0;
+
+    if (mom > prevPeak) peakMomentum.set(s.candidate.mint, mom);
+
+    if (count < 2) {
+      // Publish to watchlist for dashboard
+      publishScreening(bus, {
+        mint: s.candidate.mint,
+        symbol: s.candidate.symbol,
+        score: s.screeningEvt.score,
+        verdict: s.screeningEvt.verdict,
+        flags: s.screeningEvt.flags,
+        liquidityUsd: s.screeningEvt.liquidityUsd,
+        pairAgeSec: s.screeningEvt.pairAgeSec,
+        ts: s.screeningEvt.ts,
+        source: s.candidate.source,
+        llmAction: undefined,
+      });
+      reason(bus, `👀 ${s.candidate.symbol ?? s.candidate.mint.slice(0, 6)} on watchlist — cycle ${count}/2 (momentum ${(mom*100).toFixed(1)}%)`, 0.5);
+      return false;
+    }
+
+    // Pullback check: don't buy at momentum peak, wait for dip
+    if (prevPeak > mom * 1.5) {
+      reason(bus, `↘️ ${s.candidate.symbol ?? s.candidate.mint.slice(0, 6)} pullback from peak ${(prevPeak*100).toFixed(1)}% to ${(mom*100).toFixed(1)}% — entering dip`, 0.6);
+    }
+
+    return true;
+  });
+
   // ── Meme Coin Market Regime ──
   // Health gauged from agent's own recent closed trades (last 2h): how many
   // sustained (TP/profit) vs dumped (SL). This reflects the LIVE meme ecosystem,
@@ -236,6 +284,13 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
   const sustainRate = recentClosed.length >= 5
     ? sustainCount / recentClosed.length
     : -1; // cold start / insufficient data
+
+  const allMomentum = screened
+    .map((s) => s.candidate.market.momentum ?? 0)
+    .filter((m) => m !== 0);
+  const bullishRatio = allMomentum.length > 0
+    ? allMomentum.filter((m) => m > 0.02).length / allMomentum.length
+    : 0.5;
 
   let regime: "bullish" | "sideways" | "bearish";
   if (sustainRate >= 0.45 && bullishRatio > 0.4) regime = "bullish";
@@ -298,22 +353,20 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
     }
   }
 
-  for (const r of safe) {
+  for (const r of eligible) {
     if (decidedMints.has(r.candidate.mint)) continue;
     decidedMints.add(r.candidate.mint);
 
     // ── Smart-money wallet intelligence ──
     if (walletIntel && db) {
       try {
-        const buyers = await walletIntel.getRecentBuyers(r.candidate.mint, 15);
-        if (buyers.length > 0) {
-          const { getWalletScores, recordWalletSwap } = await import("@anton/data");
-          const addresses = buyers.map((b) => b.wallet);
-          const scores = await getWalletScores(db, addresses);
-          const smartBuyers = addresses.filter((a) => (scores.get(a) ?? 0.5) > 0.6);
-          r.candidate.signals.smartWallets = smartBuyers;
+        const { getWalletScores, recordWalletSwap } = await import("@anton/data");
+        const scores = await getWalletScores(db, []); // will use analyze's internal fetch
+        const intel = await walletIntel.analyze(r.candidate.mint, scores);
 
-          for (const b of buyers) {
+        if (intel.buyers.length > 0) {
+          // Record all buyers
+          for (const b of intel.buyers) {
             await recordWalletSwap(db, {
               wallet: b.wallet,
               mint: r.candidate.mint,
@@ -323,12 +376,28 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
             }).catch(() => {});
           }
 
-          if (smartBuyers.length > 0) {
-            reason(bus, `💰 Smart money detected: ${smartBuyers.length} known wallet(s) bought ${r.candidate.symbol ?? r.candidate.mint.slice(0, 6)}`, 0.8);
+          // Smart money signal
+          r.candidate.signals.smartWallets = intel.smartBuyers;
+          if (intel.smartBuyers.length > 0) {
+            reason(bus, `💰 ${intel.smartBuyers.length} smart wallet(s) detected on ${r.candidate.symbol ?? r.candidate.mint.slice(0, 6)}`, 0.8);
+          }
+
+          // Bundle warning
+          if (intel.bundledCount > 0) {
+            reason(bus, `🎭 BUNDLE detected on ${r.candidate.symbol ?? r.candidate.mint.slice(0, 6)}: ${intel.bundledCount} wallet(s) from same funder — likely sniper/insider`, 0.75);
+          }
+
+          // Fresh wallet warning
+          if (intel.freshWalletCount > 0) {
+            reason(bus, `🆕 ${intel.freshWalletCount} fresh wallet(s) (< 5 txns) detected — possible bot/sybil`, 0.7);
           }
         }
+
+        if (intel.rateLimited) {
+          log("⚠ wallet-intel rate limited — reduce trade frequency or switch API key");
+        }
       } catch {
-        // Non-fatal — wallet intel failures don't block trading
+        // Non-fatal
       }
     }
 
@@ -557,7 +626,9 @@ async function bootstrap(): Promise<void> {
   }
 
   if (env.SOLANA_RPC_URL) {
-    walletIntel = new WalletIntel(createConnection(env.SOLANA_RPC_URL));
+    walletIntel = new WalletIntel(createConnection(env.SOLANA_RPC_URL), () => {
+      log("⚠ wallet-intel rate limited — reduce trade frequency or switch API key");
+    });
     log("wallet intel: smart-money detection active");
   }
 
