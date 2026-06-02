@@ -204,6 +204,7 @@ export class PositionBook {
     entryPriceUsd: number,
     mode: ExecutionMode,
     entryMarketCapUsd?: number,
+    poolPubkey?: string,
   ): Promise<boolean> {
     if (decision.action !== "BUY" || !decision.size_sol) return false;
     if (this.atCapacity()) return false;
@@ -284,11 +285,7 @@ export class PositionBook {
         if (priceUsd > 0) p.currentPriceUsd = priceUsd;
         if (marketCapUsd && marketCapUsd > 0) p.currentMarketCapUsd = marketCapUsd;
         p.lastWsPrice = Date.now();
-
-        const pnlPct = this.pnlPct(p);
-        // Check SL/TP/trailing immediately on real-time price
-        this.checkExitConditions(p, pnlPct);
-      });
+      }, poolPubkey);
       this.wsSubs.set(pos.mint, subId);
     }
 
