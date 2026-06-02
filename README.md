@@ -1,98 +1,127 @@
 # Anton Terminal
 
-> Autonomous Solana meme coin trading agent. DeepSeek brain · on-chain smart-money learning · persistent memory · cyberpunk/brutalist B&W dashboard.
+> Autonomous Solana meme coin trading agent with adaptive AI learning.
 
-Anton sources new and trending meme tokens (Pump.fun, Jupiter, DexScreener, Twitter), screens them for rugs/honeypots, reasons with **DeepSeek V4** to decide every trade — producing a natural-language rationale for each entry, stop-loss, hold, or skip — learns from profitable on-chain "smart money" wallets, remembers lessons across sessions, and executes fast scalps with MEV protection. Dry-run first.
+DeepSeek V4 brain analyses real-time DEX data, screens for safety, detects smart-money wallets via Helius, learns from every trade, and executes via Jupiter swaps. Quality-over-quantity strategy with anti-FOMO watchlist, pullback entry timing, and meme-ecosystem market regime detection.
 
-> **High-risk software.** Trades real money on volatile assets. Built dry-run-first with hard safety caps. Live trading is opt-in only. Use at your own risk.
+> **High-risk software.** Trades real money on volatile assets. Built with hard safety caps. Live trading is opt-in only. Use at your own risk.
+
+---
+
+## Strategy
+
+| Layer | Description |
+|-------|-------------|
+| **Ingestion** | DexScreener trending + Pump.fun + Axiom — 12 candidates/cycle |
+| **Market Regime** | Live ecosystem scan: pumping vs dumping token ratio → bullish/sideways/bearish |
+| **Screening** | On-chain (mint/freeze authority) + RugCheck + holder concentration gate (top10 > 60% reject) |
+| **Wallet Intel** | Helius transaction parsing: recent buyers, bundle detection, fresh wallet check, smart-money scoring |
+| **Watchlist** | Anti-FOMO: tokens observed 2+ cycles before eligible entry |
+| **Entry Timing** | Pullback strategy: enter on momentum dip from peak, not FOMO top |
+| **LLM Decision** | Rich context (25+ fields): smart wallets, holders, portfolio, pattern stats, lessons → dynamic SL/TP |
+| **Exit** | Trailing stop (MC-adaptive 8-15%), stale position timeout (30min), LLM re-evaluation (hold-first bias) |
+| **Learning** | Position close → LLM reflection → lesson stored. Pattern stats (W/L per category). Wallet trust scoring (self-learning) |
+
+## Safety
+
+| Limit | Value |
+|-------|-------|
+| Max concurrent positions | 3 |
+| Max trades per day | 10 |
+| Daily loss cap | 1 SOL |
+| Cold start | BEARISH mode (no entries until data) |
+| Anti-FOMO | 2-cycle watchlist observation + pullback entry |
+| Profit exit cooldown | 30 min |
+| Loss exit cooldown | 5 min |
+| Trailing stop | 8-15% (market cap adaptive) |
+
+## Dashboard
+
+| Panel | Description |
+|-------|-------------|
+| **Balance Chart** | Real-time SOL equity curve |
+| **Agent Reasoning** | Live SSE stream of LLM decisions + reasoning |
+| **ACTIVE / WATCH / HISTORY** | Positions, watchlisted tokens, closed trades |
+| **Live Screening** | SAFE/CAUTION/REJECT + BUY/SKIP decisions + holder gate |
+| **Learning** | Recent lessons + pattern stats (W/L, WR%, avg PnL) + smart wallet counter |
+| **Footer** | Uptime, ping, light/dark toggle, config gate (password-protected) |
 
 ---
 
 ## Architecture
 
-Full design lives in [`docs/`](./docs):
-
-| Doc | Topic |
-|---|---|
-| [ARCHITECTURE](./docs/ARCHITECTURE.md) | Overview, decision loop, stack |
-| [02-DATA-SOURCES](./docs/02-DATA-SOURCES.md) | Token sourcing |
-| [03-AGENT-CORE](./docs/03-AGENT-CORE.md) | DeepSeek brain |
-| [04-LEARNING](./docs/04-LEARNING.md) | Smart-wallet learning |
-| [05-MEMORY](./docs/05-MEMORY.md) | Lessons, identity, operator memory |
-| [06-SCREENING](./docs/06-SCREENING.md) | Rug/honeypot safety |
-| [07-EXECUTION](./docs/07-EXECUTION.md) | Swaps, Jito, dry-run |
-| [08-DATA-MODEL](./docs/08-DATA-MODEL.md) | Database schema |
-| [09-DASHBOARD](./docs/09-DASHBOARD.md) | Realtime UI |
-| [10-CONFIG-DEPLOY](./docs/10-CONFIG-DEPLOY.md) | Config, secrets, deploy |
-| [11-ROADMAP](./docs/11-ROADMAP.md) | Build phases |
-
----
-
-## Monorepo Layout
-
 ```
 anton-terminal/
 ├── apps/
-│   ├── agent/          # long-running trading process (entrypoint)
-│   └── dashboard/      # Next.js B&W cyberpunk terminal
+│   ├── agent/          # Trading loop (entrypoint)
+│   └── dashboard/      # Next.js B&W terminal UI
 ├── packages/
-│   ├── shared-types/   # cross-package type contract
+│   ├── shared-types/   # Cross-package type contract
 │   ├── config/         # Zod trading config + presets + env
-│   ├── data/           # Drizzle schema (Postgres + TimescaleDB + pgvector)
-│   ├── ingestion/      # token sources (Pump.fun, Jupiter, DexScreener, social)
-│   ├── screening/      # rug/honeypot safety pipeline
-│   ├── agent/          # DeepSeek reasoning core
-│   ├── memory/         # lessons (pgvector) + identity + operator
-│   ├── learning/       # smart-wallet tracking + imitation
-│   ├── solana/         # RPC, wallet, tx assembly
-│   ├── execution/      # Jupiter swaps + Jito + dry-run engine
-│   ├── scheduler/      # BullMQ queues + workers
-│   └── realtime/       # Socket.IO + SSE + Redis event bus
+│   ├── data/           # Drizzle ORM (PostgreSQL)
+│   ├── ingestion/      # DexScreener, Pump.fun, Axiom sources
+│   ├── screening/      # On-chain + RugCheck safety
+│   ├── agent/          # DeepSeek reasoning + decide/exit functions
+│   ├── memory/         # Lessons, pattern stats, smart wallets (pg)
+│   ├── solana/         # RPC, wallet, swap, price-ws, wallet-intel
+│   └── realtime/       # Socket.IO + SSE event bus
 └── docs/
 ```
+
+## Stack
+
+DeepSeek V4 · Jupiter Swap API · Helius RPC/WebSocket · DexScreener API · RugCheck · PostgreSQL · Next.js 15 + Tailwind · Socket.IO + SSE · TypeScript monorepo (pnpm)
 
 ---
 
 ## Quick Start
 
 ### Prerequisites
-- Node.js 20+
+- Node.js 22+
 - pnpm 9+
-- Docker (for Postgres/TimescaleDB + Redis)
+- Docker (PostgreSQL)
 
 ### Setup
 
 ```bash
 pnpm install
-cp .env.example .env          # fill in API keys (DeepSeek, Helius, Jupiter, ...)
-docker compose up -d          # Postgres (TimescaleDB) + Redis + Bull Board
+cp .env.example .env          # fill in API keys
+docker compose up -d          # PostgreSQL
 pnpm db:migrate               # apply schema
 ```
 
-### Run (dry-run by default)
+### Run
 
 ```bash
-pnpm dev                      # agent + dashboard
+pnpm dev                      # agent (port 4001) + dashboard (port 4000)
 ```
 
-- Dashboard: http://localhost:3000
-- Bull Board (queues): http://localhost:3001
-
-The dashboard runs in mock mode without a backend (`NEXT_PUBLIC_MOCK=1`) so you can preview the terminal UI immediately.
+Dashboard: http://localhost:4000
 
 ---
 
-## Safety
+## Environment
 
-- **Dry-run first.** `ANTON_MODE=dry-run` is the default. Dry-run and live share one code path; only final transaction submission differs.
-- **Hard caps** (in `@anton/config`): max position size, max concurrent positions, daily loss cap, min liquidity, mint/freeze-authority-revoked requirement. The LLM can never exceed these.
-- **Layered screening** rejects honeypots and rugs before any capital is risked.
-- **Self-custody.** The hot wallet holds only a minimal trading budget; keys never leave the agent process.
+```env
+ANTON_MODE=live
+DEEPSEEK_API_KEY=sk-...
+SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=...
+SOLANA_RPC_WS=wss://mainnet.helius-rpc.com/?api-key=...
+SOLANA_PRIVATE_KEY=[...]
+DATABASE_URL=postgres://anton:anton@localhost:5433/anton
+JUPITER_SLIPPAGE_BPS=300
+NEXT_PUBLIC_REALTIME_URL=http://localhost:4000
+NEXT_PUBLIC_CONFIG_PASSWORD=pr1nce-terminal
+```
 
-Complete the [go-live checklist](./docs/10-CONFIG-DEPLOY.md#6--operational-safety-checklist-before-live) before enabling live trading.
+## Deploy (VPS)
 
----
-
-## Stack
-
-DeepSeek V4 (brain) · Mastra (agent runtime) · Jupiter Swap V2 + Jito (execution) · Helius (RPC/webhooks) · PostgreSQL + TimescaleDB + pgvector · Redis + BullMQ · Next.js + Tailwind + shadcn/ui · Socket.IO + SSE · TypeScript monorepo (Turborepo + pnpm).
+```bash
+cd ~/anton-terminal && git pull
+pnpm --filter @anton/shared-types build
+pnpm --filter @anton/data build
+pnpm --filter @anton/solana build
+pnpm --filter @anton/agent build
+pm2 restart anton-agent
+cd apps/dashboard && npx next build && PORT=4000 pm2 restart anton-dashboard
+```
