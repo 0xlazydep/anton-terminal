@@ -55,6 +55,7 @@ interface OpenPosition {
   peakPriceUsd: number;
   trailingActivated: boolean;
   actualEntrySol?: number;
+  lastWsPrice: number;
 }
 
 export interface PositionBookLimits {
@@ -125,6 +126,7 @@ export class PositionBook {
         openedAt: r.openedAt,
         peakPriceUsd: r.entryPriceUsd,
         trailingActivated: false,
+        lastWsPrice: 0,
       });
     }
     const closed = await listClosedPositions(this.db, 100, mode);
@@ -240,6 +242,7 @@ export class PositionBook {
       peakPriceUsd: entryPriceUsd,
       trailingActivated: false,
       actualEntrySol,
+      lastWsPrice: 0,
     };
     this.positions.set(id, pos);
 
@@ -280,6 +283,7 @@ export class PositionBook {
         if (!p) return;
         if (priceUsd > 0) p.currentPriceUsd = priceUsd;
         if (marketCapUsd && marketCapUsd > 0) p.currentMarketCapUsd = marketCapUsd;
+        p.lastWsPrice = Date.now();
 
         const pnlPct = this.pnlPct(p);
         // Check SL/TP/trailing immediately on real-time price
@@ -343,6 +347,7 @@ export class PositionBook {
   }
 
   private async refresh(pos: OpenPosition): Promise<void> {
+    if (pos.lastWsPrice > 0 && Date.now() - pos.lastWsPrice < 5000) return;
     let priceUsd: number | undefined;
     let marketCapUsd: number | undefined;
     try {
