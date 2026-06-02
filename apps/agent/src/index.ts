@@ -293,13 +293,11 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
   });
 
   // ── Meme Coin Market Regime ──
-  // Primary: LIVE ecosystem data from all screened candidates (not BTC/SOL).
-  // How many tokens pumping vs dumping RIGHT NOW across the meme ecosystem?
-  const allMomentum = screened
-    .map((s) => s.candidate.market.momentum ?? 0)
-    .filter((m) => m !== 0);
-  const pumping = allMomentum.filter((m) => m > 0.03).length;
-  const dumping = allMomentum.filter((m) => m < -0.03).length;
+  // Full ecosystem scan: use ALL candidates (not just SAFE) to gauge market health.
+  // Include Pump.fun tokens (momentum may be 0, that's data — dead tokens = bearish signal).
+  const allMomentum = candidates.map((c) => c.market.momentum ?? 0);
+  const pumping = allMomentum.filter((m) => m > 0.02).length;
+  const dumping = allMomentum.filter((m) => m < -0.02).length;
   const total = allMomentum.length || 1;
   const pumpRatio = pumping / total;
   const dumpRatio = dumping / total;
