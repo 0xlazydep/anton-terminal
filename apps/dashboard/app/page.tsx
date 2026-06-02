@@ -12,6 +12,7 @@ import { ReasoningLog } from "@/components/panels/ReasoningLog";
 import { Screening } from "@/components/panels/Screening";
 import { SmartWalletFeed } from "@/components/panels/SmartWalletFeed";
 import { Learning } from "@/components/panels/Learning";
+import { FeeBreakdown } from "@/components/panels/FeeBreakdown";
 
 export default function DashboardPage() {
   const [configOpen, setConfigOpen] = useState(false);
@@ -51,8 +52,11 @@ export default function DashboardPage() {
           <div className="lg:col-span-5 h-[280px] sm:h-[320px]">
             <SmartWalletFeed />
           </div>
-          <div className="lg:col-span-12 h-[280px] sm:h-[320px]">
+          <div className="lg:col-span-6 h-[280px] sm:h-[320px]">
             <Learning />
+          </div>
+          <div className="lg:col-span-6 h-[280px] sm:h-[320px]">
+            <FeeBreakdown />
           </div>
           {configOpen && configUnlocked && (
             <div className="lg:col-span-12">

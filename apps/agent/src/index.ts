@@ -27,11 +27,14 @@ import {
   createDb,
   insertBalanceSnapshot,
   listRecentBalanceSnapshots,
+  recordTrade,
   type Database,
+  type RecordTradeInput,
 } from "@anton/data";
+
 import { fetchCandidates } from "@anton/ingestion";
 import { screenCandidate } from "@anton/screening";
-import { decide, decideExit, DeepSeekClient, type ReasoningStep } from "@anton/agent";
+import { decide, decideExit, DeepSeekClient, type ReasoningStep, type PatternStat, feeEfficiencyGate, type EfficiencyGate } from "@anton/agent";
 import { loadHotWallet, createConnection, LAMPORTS_PER_SOL } from "@anton/solana";
 import { swapBuy } from "@anton/solana";
 import { swapSell } from "@anton/solana";
@@ -52,6 +55,7 @@ import { PositionBook } from "./positions.js";
 import { reflectOnClose } from "./learn.js";
 import {
   publishDecision,
+  publishFeeBreakdown,
   publishHoldingsSnapshot,
   publishReasoningStep,
   publishScreening,
@@ -111,6 +115,13 @@ async function fetchWalletBalance(): Promise<void> {
   const connection = createConnection(env.SOLANA_RPC_URL);
   const lamports = await connection.getBalance(wallet.publicKey);
   lastWalletBalance = lamports / LAMPORTS_PER_SOL;
+}
+
+function persistTrade(input: Omit<RecordTradeInput, "mode">): void {
+  if (!db) return;
+  recordTrade(db, { ...input, mode: config.mode }).catch((err) =>
+    log(`trade persist: ${String(err).slice(0, 80)}`),
+  );
 }
 
 function snapshot(bus: EventBus, book: PositionBook, db?: Database): void {
@@ -352,6 +363,7 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
   // Fetch learning context: lessons + pattern stats
   let recentLessons: string[] | undefined;
   let patternStatsSummary: string | undefined;
+  let patternStats: PatternStat[] | undefined;
   if (db) {
     try {
       const { getRecentLessons, getPatternStats } = await import("@anton/data");
@@ -359,6 +371,13 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
       recentLessons = lessons.map((l) => `[${l.severity}] ${l.summary}`);
 
       const stats = await getPatternStats(db);
+      patternStats = stats.map((s) => ({
+        category: s.category,
+        key: s.key,
+        totalTrades: s.totalTrades,
+        winRate: s.winRate,
+        avgPnlPct: s.avgPnlPct,
+      }));
       if (stats.length > 0) {
         const lines = stats.slice(0, 8).map((s) =>
           `${s.category}/${s.key}: ${s.totalWins}W/${s.totalLosses}L (${s.winRate ? (s.winRate * 100).toFixed(0) + "%" : "N/A"} WR, avg ${s.avgPnlPct.toFixed(1)}% PnL)`
@@ -367,6 +386,22 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
       }
     } catch {
       // Non-fatal — continue without learning context
+    }
+  }
+
+  let efficiencyGate: EfficiencyGate | undefined;
+  let feeStats: { avgFeePerTradeSol: number; avgSlippageBps: number } | undefined;
+  if (db && config.mode === "live") {
+    try {
+      const { getFeeBreakdown } = await import("@anton/data");
+      const feeBreakdown = await getFeeBreakdown(db, { mode: "live" });
+      const avgFeePerTradeSol = feeBreakdown.tradeCount > 0 ? feeBreakdown.totalFeeSol / feeBreakdown.tradeCount : 0;
+      const feeCtx = { avgFeePerTradeSol, totalFeeSol: feeBreakdown.totalFeeSol, tradeCount: feeBreakdown.tradeCount, totalPnlSol: book.totalPnlSol() };
+      efficiencyGate = feeEfficiencyGate(lastWalletBalance, feeCtx, config);
+      feeStats = { avgFeePerTradeSol, avgSlippageBps: feeBreakdown.avgSlippageBps };
+      publishFeeBreakdown(bus, { totalFeeSol: feeBreakdown.totalFeeSol, totalPriorityFeeSol: feeBreakdown.totalPriorityFeeSol, avgSlippageBps: feeBreakdown.avgSlippageBps, estSlippageCostSol: feeBreakdown.estSlippageCostSol, avgPriceImpactPct: feeBreakdown.avgPriceImpactPct, tradeCount: feeBreakdown.tradeCount, feeToProfitRatio: efficiencyGate.feeToProfitRatio, avgFeePerTradeSol: feeCtx.avgFeePerTradeSol });
+    } catch {
+      // Non-fatal
     }
   }
 
@@ -439,6 +474,9 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
         realizedPnlSol: realizedToday,
         recentLessons,
         patternStatsSummary,
+        patternStats,
+        maxSizeSol: efficiencyGate?.adjustedMaxSizeSol,
+        feeContext: feeStats,
       },
       {
         deepseek,
@@ -473,8 +511,19 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
 
       if (dailyLossExceeded) {
         reason(bus, `⛔ Daily loss cap ${config.maxDailyLossSol} SOL reached (${realizedToday.toFixed(3)}) · skipping ${decision.symbol ?? ""}`, 0.9);
-      } else if (book.atCapacity()) {
-        reason(bus, `At max positions (${config.maxConcurrentPositions}) · skipping ${decision.symbol ?? ""}`);
+      } else if (efficiencyGate && book.count >= efficiencyGate.maxConcurrent) {
+        reason(bus, `At max positions (${efficiencyGate.maxConcurrent} for ${lastWalletBalance.toFixed(1)} SOL account) · skipping ${decision.symbol ?? ""}`);
+      } else if (efficiencyGate && decision.confidence < efficiencyGate.minConviction) {
+        reason(bus, `Conviction ${decision.confidence.toFixed(2)} below gate ${efficiencyGate.minConviction} · skipping ${decision.symbol ?? ""}`, decision.confidence);
+      } else if (
+        efficiencyGate &&
+        efficiencyGate.minEntryScore > 0 &&
+        decision.entry_score !== undefined &&
+        decision.entry_score < efficiencyGate.minEntryScore
+      ) {
+        reason(bus, `Entry quality ${decision.entry_score}/100 below gate ${efficiencyGate.minEntryScore} (${lastWalletBalance.toFixed(1)} SOL account) · skipping ${decision.symbol ?? ""}`, decision.confidence);
+      } else if (decision.expected_value_sol !== undefined && decision.expected_value_sol <= 0) {
+        reason(bus, `⛔ Negative expected value ${decision.expected_value_sol.toFixed(4)} SOL — expected cost ${(decision.expected_cost_sol ?? 0).toFixed(4)} exceeds edge · skipping ${decision.symbol ?? ""}`, 0.8);
       } else {
         status(bus, "entering");
         const opened = await book.open(
@@ -675,11 +724,27 @@ async function bootstrap(): Promise<void> {
               slippageBps,
             });
             log(`swap BUY ${tokenMint.slice(0, 8)}... ${solAmount} SOL → ${result.txSignature.slice(0, 16)}...`);
-            return { txSignature: result.txSignature };
+            const actualSolSpent = result.solSpentLamports !== undefined
+              ? result.solSpentLamports / LAMPORTS_PER_SOL
+              : undefined;
+            persistTrade({
+              mint: tokenMint,
+              direction: "BUY",
+              sizeSol: solAmount,
+              actualSolSpent,
+              slippageBps: result.slippageBps,
+              priorityFeeSol: result.priorityFeeLamports !== undefined
+                ? result.priorityFeeLamports / LAMPORTS_PER_SOL
+                : undefined,
+              feeSol: actualSolSpent !== undefined ? Math.max(0, actualSolSpent - solAmount) : undefined,
+              txSignature: result.txSignature,
+              priceImpactPct: result.priceImpactPct,
+            });
+            return { txSignature: result.txSignature, actualSolSpent };
           }
         : undefined,
       swapTokenForSol: env.SOLANA_PRIVATE_KEY && env.SOLANA_RPC_URL
-        ? async (tokenMint: string, _solAmount: number) => {
+        ? async (tokenMint: string, sizeSol: number) => {
             const wallet = loadHotWallet(env.SOLANA_PRIVATE_KEY!);
             const connection = createConnection(env.SOLANA_RPC_URL!);
             const balance = await getTokenBalance(connection, wallet.publicKey, tokenMint);
@@ -689,7 +754,23 @@ async function bootstrap(): Promise<void> {
             const slippageBps = Number(process.env.JUPITER_SLIPPAGE_BPS ?? 100);
             const result = await swapSell(connection, wallet, tokenMint, balance.rawAmount, slippageBps);
             log(`swap SELL ${tokenMint.slice(0, 8)}... ${balance.uiAmount} tokens → ${result.txSignature.slice(0, 16)}...`);
-            return { txSignature: result.txSignature };
+            const solDelta = result.solSpentLamports !== undefined
+              ? result.solSpentLamports / LAMPORTS_PER_SOL
+              : undefined;
+            persistTrade({
+              mint: tokenMint,
+              direction: "SELL",
+              sizeSol,
+              actualSolSpent: solDelta,
+              tokenAmount: balance.uiAmount,
+              slippageBps: result.slippageBps,
+              priorityFeeSol: result.priorityFeeLamports !== undefined
+                ? result.priorityFeeLamports / LAMPORTS_PER_SOL
+                : undefined,
+              txSignature: result.txSignature,
+              priceImpactPct: result.priceImpactPct,
+            });
+            return { txSignature: result.txSignature, actualSolSpent: solDelta };
           }
         : undefined,
     },

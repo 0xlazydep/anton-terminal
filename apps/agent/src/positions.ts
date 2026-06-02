@@ -54,6 +54,7 @@ interface OpenPosition {
   openedAt: number;
   peakPriceUsd: number;
   trailingActivated: boolean;
+  actualEntrySol?: number;
 }
 
 export interface PositionBookLimits {
@@ -61,11 +62,17 @@ export interface PositionBookLimits {
   preventDuplicateMint: boolean;
 }
 
+export interface SwapExecResult {
+  txSignature: string;
+  /** Native-balance delta in SOL. Positive on BUY (spent), negative on SELL (received). */
+  actualSolSpent?: number;
+}
+
 export interface PositionBookDeps {
   db?: Database;
   onError?: (msg: string) => void;
-  swapSolForToken?: (tokenMint: string, solAmount: number) => Promise<{ txSignature: string }>;
-  swapTokenForSol?: (tokenMint: string, solAmount: number) => Promise<{ txSignature: string }>;
+  swapSolForToken?: (tokenMint: string, solAmount: number) => Promise<SwapExecResult>;
+  swapTokenForSol?: (tokenMint: string, solAmount: number) => Promise<SwapExecResult>;
   priceFeed?: HeliusPriceFeed;
 }
 
@@ -75,8 +82,8 @@ export class PositionBook {
   private readonly history: ClosedPositionSnapshot[] = [];
   private readonly db?: Database;
   private readonly onError: (msg: string) => void;
-  private readonly swapSolForToken?: (tokenMint: string, solAmount: number) => Promise<{ txSignature: string }>;
-  private readonly swapTokenForSol?: (tokenMint: string, solAmount: number) => Promise<{ txSignature: string }>;
+  private readonly swapSolForToken?: (tokenMint: string, solAmount: number) => Promise<SwapExecResult>;
+  private readonly swapTokenForSol?: (tokenMint: string, solAmount: number) => Promise<SwapExecResult>;
   private readonly priceFeed?: HeliusPriceFeed;
   private readonly wsSubs = new Map<string, number>();
   private readonly wsSubMints = new Set<string>();
@@ -203,11 +210,13 @@ export class PositionBook {
     }
 
     let txSig: string | undefined;
+    let actualEntrySol: number | undefined;
     if (mode === "live" && this.swapSolForToken) {
       const sizeSol = decision.size_sol;
       try {
         const result = await this.swapSolForToken(decision.token, sizeSol);
         txSig = result.txSignature;
+        actualEntrySol = result.actualSolSpent;
       } catch (err) {
         this.onError(`swap failed: ${String(err).slice(0, 120)}`);
         return false;
@@ -230,6 +239,7 @@ export class PositionBook {
       openedAt: Date.now(),
       peakPriceUsd: entryPriceUsd,
       trailingActivated: false,
+      actualEntrySol,
     };
     this.positions.set(id, pos);
 
@@ -378,9 +388,11 @@ export class PositionBook {
   }
 
   private async close(pos: OpenPosition, pnlPct: number, reason: string): Promise<void> {
+    let exitSol: number | undefined;
     if (pos.mode === "live" && this.swapTokenForSol) {
       try {
         const result = await this.swapTokenForSol(pos.mint, pos.sizeSol);
+        if (result.actualSolSpent !== undefined) exitSol = -result.actualSolSpent;
         this.onError(`swap SELL ${pos.symbol ?? pos.mint.slice(0, 8)} → ${result.txSignature.slice(0, 16)}...`);
       } catch (err) {
         this.onError(`swap sell failed: ${String(err).slice(0, 120)} — position kept open`);
@@ -388,7 +400,7 @@ export class PositionBook {
       }
     }
 
-    this.finalizeClose(pos, pnlPct, reason);
+    this.finalizeClose(pos, pnlPct, reason, exitSol);
   }
 
   /**
@@ -412,7 +424,7 @@ export class PositionBook {
     return true;
   }
 
-  private finalizeClose(pos: OpenPosition, pnlPct: number, reason: string): void {
+  private finalizeClose(pos: OpenPosition, pnlPct: number, reason: string, exitSol?: number): void {
     // Unsubscribe from WS if no other positions share this mint
     let mintStillOpen = false;
     for (const p of this.positions.values()) {
@@ -428,7 +440,9 @@ export class PositionBook {
     }
 
     this.positions.delete(pos.id);
-    const pnlSol = pos.sizeSol * (pnlPct / 100);
+    const realFill =
+      pos.actualEntrySol !== undefined && pos.actualEntrySol > 0 && exitSol !== undefined;
+    const pnlSol = realFill ? exitSol! - pos.actualEntrySol! : pos.sizeSol * (pnlPct / 100);
     this.realizedPnlSol += pnlSol;
     const closedAt = Date.now();
 

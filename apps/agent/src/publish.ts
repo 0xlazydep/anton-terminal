@@ -20,6 +20,7 @@ import type {
   ScreeningResultEvent,
   WalletEnteredEvent,
   WalletExitedEvent,
+  FeeBreakdownEvent,
 } from "@anton/shared-types";
 
 export function publishReasoningStep(bus: EventBus, data: ReasoningStepEvent): void {
@@ -60,4 +61,8 @@ export function publishWalletEntered(bus: EventBus, data: WalletEnteredEvent): v
 
 export function publishWalletExited(bus: EventBus, data: WalletExitedEvent): void {
   void bus.publish(CHANNELS.smartWallet, { type: "wallet_exited", data });
+}
+
+export function publishFeeBreakdown(bus: EventBus, data: FeeBreakdownEvent): void {
+  void bus.publish(CHANNELS.trading, { type: "fee_breakdown", data });
 }

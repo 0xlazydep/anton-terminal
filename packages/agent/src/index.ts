@@ -12,3 +12,21 @@ export type {
   ReasoningStep,
   ExitDecision,
 } from "./decide.js";
+export {
+  entryQualityScore,
+  riskAdjustedSize,
+  feeEfficiencyGate,
+  expectedValueGate,
+  winProbabilityFor,
+} from "./scoring.js";
+export type {
+  EntryScore,
+  EntryScoreComponent,
+  SizeInputs,
+  SizeResult,
+  PatternStat,
+  FeeContext,
+  EfficiencyGate,
+  ExpectedValueInputs,
+  ExpectedValueResult,
+} from "./scoring.js";

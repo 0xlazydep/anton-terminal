@@ -18,6 +18,13 @@ import type {
 } from "@anton/shared-types";
 import type { TradingConfig } from "@anton/config";
 import { DeepSeekClient, type DeepSeekTool } from "./deepseek.js";
+import {
+  entryQualityScore,
+  riskAdjustedSize,
+  expectedValueGate,
+  winProbabilityFor,
+  type PatternStat,
+} from "./scoring.js";
 
 export interface ReasoningStep {
   thought: string;
@@ -38,6 +45,12 @@ export interface DecideContext {
   recentLessons?: string[];
   /** Pattern stats summary string to inject into prompt. */
   patternStatsSummary?: string;
+  /** Structured pattern stats used to risk-adjust sizing and entry scoring. */
+  patternStats?: PatternStat[];
+  /** Balance-derived size ceiling from the efficiency gate. */
+  maxSizeSol?: number;
+  /** Recent fee stats for expected-value gating. */
+  feeContext?: { avgFeePerTradeSol: number; avgSlippageBps: number };
 }
 
 export interface DecideOptions {
@@ -216,25 +229,6 @@ interface DecisionArgs {
   exit_position_id?: string;
 }
 
-function clampSize(
-  size: number | undefined,
-  cfg: TradingConfig,
-  conviction: number,
-  remainingBudgetSol?: number,
-): number {
-  const raw = size ?? cfg.defaultSizeSol;
-  const convictionMul = Math.max(0.3, Math.min(1.0, conviction));
-  const baseSize = cfg.minSpendSol + (cfg.maxSpendSol - cfg.minSpendSol) * convictionMul;
-  let adjusted = Math.max(cfg.minSpendSol, Math.min(cfg.maxSpendSol, isNaN(raw) ? baseSize : raw * convictionMul));
-
-  if (remainingBudgetSol !== undefined && remainingBudgetSol > 0) {
-    const budgetCap = remainingBudgetSol * 0.25;
-    adjusted = Math.min(adjusted, budgetCap);
-  }
-
-  return Math.max(cfg.minSpendSol, Math.min(cfg.maxSpendSol, Math.round(adjusted * 1000) / 1000));
-}
-
 async function decideWithDeepSeek(
   ctx: DecideContext,
   client: DeepSeekClient,
@@ -261,17 +255,60 @@ async function decideWithDeepSeek(
   const action: TradeAction = args.action ?? "SKIP";
   onStep?.({ thought: args.reason ?? "decision returned", confidence: args.confidence });
 
+  let sizeSol: number | undefined;
+  let entryScore: number | undefined;
+  let evSol: number | undefined;
+  let evCostSol: number | undefined;
+  const tp = args.take_profit_pct ?? ctx.config.defaultTakeProfitPct;
+  const sl = args.stop_loss_pct ?? ctx.config.defaultStopLossPct;
+  if (action === "BUY") {
+    const entry = entryQualityScore(ctx.candidate, ctx.screening, ctx.patternStats);
+    entryScore = entry.score;
+    const sized = riskAdjustedSize({
+      config: ctx.config,
+      conviction: args.confidence ?? 0.5,
+      entryScore: entry.score,
+      candidate: ctx.candidate,
+      remainingBudgetSol: ctx.remainingBudgetSol,
+      realizedPnlSol: ctx.realizedPnlSol,
+      rawRequestedSize: args.size_sol,
+      maxSizeOverride: ctx.maxSizeSol,
+    });
+    sizeSol = sized.sizeSol;
+    if (ctx.feeContext) {
+      const p = winProbabilityFor(ctx.candidate, ctx.patternStats, args.confidence ?? 0.5);
+      const ev = expectedValueGate({
+        sizeSol,
+        takeProfitPct: tp,
+        stopLossPct: sl,
+        winProbability: p,
+        avgFeePerTradeSol: ctx.feeContext.avgFeePerTradeSol,
+        avgSlippageBps: ctx.feeContext.avgSlippageBps,
+      });
+      evSol = ev.expectedValueSol;
+      evCostSol = ev.expectedCostSol;
+      onStep?.({ thought: ev.reason, confidence: args.confidence });
+    }
+    onStep?.({
+      thought: `Entry quality ${entry.score}/100 · size ${sized.sizeSol} SOL [${sized.factors.map((f) => `${f.label} x${f.multiplier.toFixed(2)}`).join(", ")}]`,
+      confidence: args.confidence,
+    });
+  }
+
   return {
     action,
     token: ctx.candidate.mint,
     symbol: ctx.candidate.symbol,
-    size_sol: action === "BUY" ? clampSize(args.size_sol, ctx.config, args.confidence ?? 0.5, ctx.remainingBudgetSol) : undefined,
+    size_sol: sizeSol,
     confidence: args.confidence ?? 0.5,
     reason: args.reason ?? "no rationale",
-    stop_loss_pct: args.stop_loss_pct ?? ctx.config.defaultStopLossPct,
-    take_profit_pct: args.take_profit_pct ?? ctx.config.defaultTakeProfitPct,
+    stop_loss_pct: sl,
+    take_profit_pct: tp,
     risk_flags: ctx.screening.flags,
     exit_position_id: args.exit_position_id,
+    entry_score: entryScore,
+    expected_value_sol: evSol,
+    expected_cost_sol: evCostSol,
   };
 }
 
@@ -318,16 +355,53 @@ function decideWithRules(
     confidence = 0.5;
   }
 
+  let sizeSol: number | undefined;
+  let entryScore: number | undefined;
+  let evSol: number | undefined;
+  let evCostSol: number | undefined;
+  if (action === "BUY") {
+    const entry = entryQualityScore(candidate, screening, ctx.patternStats);
+    entryScore = entry.score;
+    const sized = riskAdjustedSize({
+      config,
+      conviction: confidence,
+      entryScore: entry.score,
+      candidate,
+      remainingBudgetSol: ctx.remainingBudgetSol,
+      realizedPnlSol: ctx.realizedPnlSol,
+      maxSizeOverride: ctx.maxSizeSol,
+    });
+    sizeSol = sized.sizeSol;
+    if (ctx.feeContext) {
+      const p = winProbabilityFor(candidate, ctx.patternStats, confidence);
+      const ev = expectedValueGate({
+        sizeSol,
+        takeProfitPct: tpPct,
+        stopLossPct: slPct,
+        winProbability: p,
+        avgFeePerTradeSol: ctx.feeContext.avgFeePerTradeSol,
+        avgSlippageBps: ctx.feeContext.avgSlippageBps,
+      });
+      evSol = ev.expectedValueSol;
+      evCostSol = ev.expectedCostSol;
+      onStep?.({ thought: ev.reason, confidence });
+    }
+    onStep?.({ thought: `Entry quality ${entry.score}/100 · risk-adjusted size ${sized.sizeSol} SOL`, confidence });
+  }
+
   return {
     action,
     token: candidate.mint,
     symbol: candidate.symbol,
-    size_sol: action === "BUY" ? clampSize(undefined, config, confidence, ctx.remainingBudgetSol) : undefined,
+    size_sol: sizeSol,
     confidence,
     reason,
     stop_loss_pct: slPct,
     take_profit_pct: tpPct,
     risk_flags: screening.flags,
+    entry_score: entryScore,
+    expected_value_sol: evSol,
+    expected_cost_sol: evCostSol,
   };
 }
 

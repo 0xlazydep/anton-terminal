@@ -204,6 +204,17 @@ export interface AgentStatusEvent {
   uptimeSec: number;
 }
 
+export interface FeeBreakdownEvent {
+  totalFeeSol: number;
+  totalPriorityFeeSol: number;
+  avgSlippageBps: number;
+  estSlippageCostSol: number;
+  avgPriceImpactPct: number;
+  tradeCount: number;
+  feeToProfitRatio: number;
+  avgFeePerTradeSol: number;
+}
+
 /** BullMQ queue names. */
 export const QUEUES = {
   candidates: "anton:candidates",

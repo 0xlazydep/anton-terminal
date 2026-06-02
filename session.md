@@ -332,3 +332,126 @@ npx next build
 PORT=4000 pm2 restart anton-dashboard
 ```
 
+---
+
+### 30. Quality-over-Quantity Strategy Overhaul 🔥
+**Masalah**: 100+ trades/hari, WR 37%, fee bleed 0.4 SOL menggerus profit.
+**Root Cause**: Agent terlalu agresif, gak ada filter kualitas.
+**Fix**:
+- `apps/agent/src/index.ts` — **Market regime filter**: cek 12 candidate momentum → bullish/sideways/bearish. Bearish → skip semua entry.
+- `apps/agent/src/index.ts` — **Daily trade cap**: max 10 trades / 24 jam.
+- `apps/agent/src/index.ts` — **Max concurrent**: 5 → 3.
+- `apps/agent/src/index.ts` — **Holder quality gate**: top 10 holders > 60% → REJECT sebelum LLM.
+- `packages/agent/src/decide.ts` — **Anti-panic exit**: hold-first bias, fresh positions (< 5min) → HOLD forced. Rule-based fallback tightened.
+- `packages/config/src/schema.ts` — Defaults: maxConcurrent 5→3, screening strict, loss cap 2→1 SOL.
+
+### 31. Meme Market Regime (External Ecosystem Data)
+**Masalah**: Regime cek trade sendiri → chicken-egg (cold start → bearish selamanya karena gak ada trade).
+**Fix**: `apps/agent/src/index.ts` — Regime now uses ALL 12 candidates from ingestion pipeline: pump ratio vs dump ratio from DexScreener/Axiom/Pump.fun. Live DEX data, bukan data internal.
+
+### 32. Watchlist + Pullback Entry (Anti-FOMO)
+**Fix**:
+- `apps/agent/src/index.ts` — **Watchlist**: SAFE tokens cycle 1 → added to watch, observed 2+ cycles before eligible. Log: `📋 TOKEN added to watchlist`.
+- `apps/agent/src/index.ts` — **Pullback entry**: track peak momentum across cycles. Only enter when momentum drops from peak but still positive. Log: `↘️ TOKEN pullback 22%→8% entering dip`.
+- `apps/dashboard/components/panels/Positions.tsx` — **WATCHLIST tab**: new tab between ACTIVE and HISTORY. Shows token data (symbol, liquidity, momentum, age, score, cycle count).
+- `packages/shared-types/src/events.ts` — Added `watchlist` to `StateSnapshotEvent` and `HoldingsSnapshotEvent`.
+- `apps/dashboard/hooks/use-realtime.ts` — Cache watchlist from holdings_snapshot (updated every 3s).
+
+### 33. Smart-Money Wallet Intelligence (Helius)
+**Fix**:
+- `packages/solana/src/wallet-intel.ts` — `WalletIntel` class: parse Helius transactions to get recent buyers, detect bundles (same funder), check wallet freshness (< 5 txns), cross-reference smart wallet trust scores.
+- `packages/data/src/queries/wallets.ts` — **NEW**: `upsertWalletScore`, `getWalletScores`, `recordWalletSwap`, `getWalletsForMint`, `getSmartWalletCount`.
+- `apps/agent/src/index.ts` — Before LLM decision: fetch buyers, check smart money, detect bundles, warn fresh wallets. Log: `💰 N smart wallet(s)`, `🎭 BUNDLE`, `🆕 fresh wallets`.
+- `apps/agent/src/index.ts` — **Self-learning**: position close → score wallets that bought that token (profit +0.05 trust, loss -0.03).
+- Dashboard: `💰 N SMART WALLETS` counter in Learning panel.
+
+### 34. BSC Token Filter + Price Feed Fix
+**Masalah**: Axiom trending API mengembalikan token BSC/Ethereum (0x... addresses) tanpa filter.
+**Fix**: `apps/agent/src/index.ts` — Regex `^[1-9A-HJ-NP-Za-km-z]{32,44}$` di depan ingestion pipeline + watchlist.
+
+**Masalah**: `price-ws.ts` crash karena Helius WS mengirim teks non-JSON.
+**Fix**: `packages/solana/src/price-ws.ts` — try/catch JSON.parse, ignore non-JSON messages.
+
+### 35. Dashboard UI Improvements
+**Fix**:
+- Solana logo SVG (3-stripe gradient) replacing text "SOL" everywhere
+- Pixel crown favicon + footer crown icon
+- "DEPLOYED" → "POSITION" label
+- Light/dark mode toggle in footer
+- Position blink animation (green/red flash on price change)
+- Slide-in animation for reasoning, screening, learning rows
+- History tab layout matching ACTIVE (entry, hold columns)
+- HIST tab fixed (was duplicate)
+
+### 36. Slippage + Fee Optimization
+**Fix**: `apps/agent/src/index.ts` — Default slippage 3% → 1% (100 bps). 18 trades = 0.05 SOL fee (was 0.10).
+**README.md**: Updated with full current architecture, strategy table, safety limits.
+
+
+### Last Action
+- Agent deployed on VPS with full quality-over-quantity strategy
+- 5-layer filters: regime → holders → watchlist → pullback → LLM
+- Starting balance: 2.0469 SOL, REALIZED PnL: +0.1520 SOL, fees: -0.1043 SOL
+- 18 trades, slippage reduced to 1%
+- Dashboard: WATCHLIST tab, LEARNING panel, light/dark, animations
+- User leaving agent to run overnight
+
+---
+
+## 2026-06-03
+
+### 37. Swap Fee Tracking + Priority Fee Control
+**Problem**: Balance 2.2 → 2.089 despite Realized PnL +0.1835. PnL computed from market-cap ratio, blind to fees.
+**Root Cause**: `swap.ts` sent no `prioritizationFeeLamports` to Jupiter — fees uncontrolled. `trades` table had `feeSol` column but nothing ever wrote to it.
+**Fix**:
+- `packages/solana/src/swap.ts` — Rewrote entirely. Now sends controlled `prioritizationFeeLamports` (capped 0.001 SOL, veryHigh), enables `dynamicComputeUnitLimit` + `dynamicSlippage`. Measures ground-truth SOL spent via pre/post wallet balance delta. Returns real `priorityFeeLamports`, `slippageBps`, `priceImpactPct`.
+- `packages/data/src/queries/trades.ts` (new) — `recordTrade()` for persisting every swap with real fee/slippage/priority-fee data. `getFeeBreakdown()` aggregates: totalFeeSol, totalPriorityFeeSol, avgSlippageBps, estSlippageCostSol, avgPriceImpactPct.
+- `apps/agent/src/positions.ts` — Realized PnL now computed from actual SOL in/out (net of all fees) when real fills available; falls back to price ratio only in dry-run.
+- `apps/agent/src/index.ts` — Both swap closures return `actualSolSpent`, persist `trades` rows.
+- **Pump.fun direct integration = REJECTED.** Jupiter charges no platform fee. Pump.fun bonding-curve swaps cost 1% and only work on un-migrated tokens. The fee problem was slippage + uncontrolled priority fee, not routing.
+
+### 38. Risk-Adjusted Position Sizing + Entry Quality Scoring
+**Problem**: Old `clampSize()` scaled only by conviction. No awareness of pattern win-rate, liquidity risk, volatility, or daily-loss drawdown.
+**Fix**:
+- `packages/agent/src/scoring.ts` (new) —
+  - `entryQualityScore()` → 0-100 with component breakdown: screening (25), momentum (25), liquidity (15), volume (15), holder concentration (10), smart wallets (10). Multiplied by pattern win-rate factor (0.6-1.3x) from existing `patternStats`.
+  - `riskAdjustedSize()` — Replaces `clampSize`. Factors: entry score (0.4-1.3x), liquidity/slippage (0.5-1.0x), volatility (0.6-1.0x), daily-loss drawdown throttle (0.4-1.0x), 25% budget cap. Each factor returned with label + note, streamed to reasoning log.
+- `packages/agent/src/decide.ts` — Both DeepSeek and rule paths use new sizing. `clampSize()` removed. Structured `patternStats` threaded into `DecideContext`.
+- **Verified**: 5 edge cases (strong entry → max, low-liq gamble → floor, -80% daily loss → 0.52x throttle, losing pattern drops 82→62, winning lifts to 100).
+
+### 39. Fee-Efficiency Gate + Account-Balance Scaling
+**Problem**: 2.1 SOL account taking 0.1-0.15 SOL positions — fees consume huge % of returns. Small accounts need fewer, higher-conviction trades.
+**Fix**:
+- `packages/agent/src/scoring.ts` —
+  - `feeEfficiencyGate(accountBalance, feeCtx, config)` → Returns maxConcurrent, minEntryScore, minConviction, adjustedMaxSize based on balance tier:
+    - ≤1 SOL: max 1 position, score≥70, conviction≥0.8
+    - 1-3 SOL: fee ratio≥35% fires gate (minScore 50, minConv 0.65)
+    - 3-5 SOL: fee ratio≥50% fires gate
+    - 5+: no gate
+  - `balanceScaledConcurrency()` → 0-1 SOL: 1 pos, 1-2 SOL: 2 pos, 2-5 SOL: balance/2 positions.
+  - `balanceCappedMax()` → 1 SOL: max 0.08 SOL/trade, 2 SOL: max 0.12, 5+: config default.
+  - `minRequiredEdgePct()` → min % move to cover entry+exit fees + 2% buffer.
+- `apps/agent/src/index.ts` — Gate wired into cycle: replaces `book.atCapacity()` with gate's `maxConcurrent`, adds conviction + score gate before BUY path.
+- `packages/shared-types/src/events.ts` — Added `FeeBreakdownEvent`.
+- `apps/agent/src/publish.ts` — `publishFeeBreakdown()`.
+
+### 40. Dashboard Fee-Breakdown Panel
+**Fix**:
+- `apps/dashboard/components/panels/FeeBreakdown.tsx` (new) — Terminal-style panel showing:
+  - Total fees / Per-trade cost / Fee-to-profit ratio
+  - Fee-to-profit ratio bar with color-coded warnings
+  - Fee breakdown by source (priority fees, network/jito, estimated slippage)
+  - Avg slippage in bps, avg price impact
+  - Stale detection after 30s without update
+- `apps/dashboard/app/page.tsx` — FeeBreakdown panel added in same row as Learning (split 6+6)
+- Listens via Socket.IO `fee_breakdown` event from trading channel
+
+### Key Takeaways
+- **Fee tracking was the #1 missing piece.** Trades table existed but was empty. Now every live swap persists cost data.
+- **Small-account dynamics fundamentally differ.** At 2.1 SOL, 0.1 SOL trades are ~5% of account each. Fee-gating + balance-aware sizing is mandatory, not optional.
+- **Config spend band too tight.** 0.1-0.15 SOL leaves only 0.05 SOL of expression room. Risk adjustments floor at min, not usefully express downward sizing.
+- **Imitation/clustering tables exist but unused.** `imitationProfiles` table, `smartWallets.winRate/realizedPnl30dUsd` columns all defined in schema — clustering logic still needs wiring.
+
+### Last Action
+- Fee tracking, risk-adjusted sizing, fee-efficiency gate, and dashboard fee panel all built and compiled clean.
+- Agent ready for restart: `pm2 restart anton-agent && cd apps/dashboard && npx next build && PORT=4000 pm2 restart anton-dashboard`

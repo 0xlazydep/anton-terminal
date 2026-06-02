@@ -18,6 +18,9 @@ export interface TradeDecision {
   take_profit_pct?: number | null;
   risk_flags?: string[];
   exit_position_id?: string;
+  entry_score?: number;
+  expected_value_sol?: number;
+  expected_cost_sol?: number;
 }
 
 /** Persisted, enriched decision record. */
