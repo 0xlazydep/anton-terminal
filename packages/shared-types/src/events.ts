@@ -109,6 +109,7 @@ export interface StateSnapshotEvent {
     avgPnlPct: number;
   }>;
   smartWalletCount?: number;
+  watchlist?: Array<{ mint: string; symbol?: string; cycleCount: number; momentum: number; score: number; liquidityUsd?: number; pairAgeSec?: number }>;
 }
 
 // ─── Screening events (server → client) ───

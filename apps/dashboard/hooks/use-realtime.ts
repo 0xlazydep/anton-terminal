@@ -273,6 +273,9 @@ export function useRealtime(): void {
       if (evt.patternStats) {
         qc.setQueryData(["pattern-stats"], evt.patternStats);
       }
+      if (evt.watchlist) {
+        qc.setQueryData(["watchlist"], evt.watchlist);
+      }
       if (evt.smartWalletCount !== undefined) {
         qc.setQueryData(["smart-wallet-count"], evt.smartWalletCount);
       }

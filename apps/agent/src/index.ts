@@ -143,6 +143,15 @@ async function buildStateSnapshot(book: PositionBook): Promise<StateSnapshotEven
     balanceHistory: [...balanceHistory],
     startingSol: STARTING_SOL,
     mode: config.mode,
+    watchlist: [...watchlistCounts.entries()]
+      .filter(([_, count]) => count === 1)
+      .map(([mint]) => ({
+        mint,
+        cycleCount: 1,
+        momentum: 0,
+        score: 0,
+      }))
+      .slice(0, 10),
   };
 
   if (db) {
@@ -247,19 +256,6 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
     if (mom > prevPeak) peakMomentum.set(s.candidate.mint, mom);
 
     if (count < 2) {
-      // Publish to watchlist for dashboard
-      publishScreening(bus, {
-        mint: s.candidate.mint,
-        symbol: s.candidate.symbol,
-        score: s.screeningEvt.score,
-        verdict: s.screeningEvt.verdict,
-        flags: s.screeningEvt.flags,
-        liquidityUsd: s.screeningEvt.liquidityUsd,
-        pairAgeSec: s.screeningEvt.pairAgeSec,
-        ts: s.screeningEvt.ts,
-        source: s.candidate.source,
-        llmAction: undefined,
-      });
       reason(bus, `👀 ${s.candidate.symbol ?? s.candidate.mint.slice(0, 6)} on watchlist — cycle ${count}/2 (momentum ${(mom*100).toFixed(1)}%)`, 0.5);
       return false;
     }

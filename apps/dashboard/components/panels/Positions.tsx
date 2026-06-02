@@ -12,7 +12,6 @@ import {
   useRealizedPnl,
 } from "@/hooks/use-positions";
 import { useQuery } from "@tanstack/react-query";
-import type { ScreeningResultEvent } from "@anton/shared-types";
 import {
   cn,
   fmtHold,
@@ -83,13 +82,12 @@ export function Positions() {
   const [tab, setTab] = useState("active");
   const now = Date.now();
 
-  // Watchlist = screened tokens with no LLM decision yet
-  const { data: screening } = useQuery<ScreeningResultEvent[]>({
-    queryKey: ["screening"],
+  interface WatchItem { mint: string; symbol?: string; cycleCount: number; momentum: number; score: number; liquidityUsd?: number; pairAgeSec?: number; }
+  const { data: watchlist } = useQuery<WatchItem[]>({
+    queryKey: ["watchlist"],
     initialData: [],
     queryFn: async () => [],
   });
-  const watchlist = (screening ?? []).filter((r) => r.verdict === "SAFE" && r.llmAction === undefined).slice(0, 10);
 
   const showActive = tab === "active";
   const pnlSol = showActive ? totalPnlSol : realizedPnlSol;
@@ -203,13 +201,11 @@ export function Positions() {
                   <TD className="text-right">—</TD>
                   <TD className="text-right">—</TD>
                   <TD className="text-right">{w.liquidityUsd != null ? `$${(w.liquidityUsd / 1000).toFixed(1)}K` : "—"}</TD>
-                  <TD className="text-right">—</TD>
+                  <TD className="text-right">{w.momentum ? `${(w.momentum*100).toFixed(1)}%` : "—"}</TD>
                   <TD className="text-right">{w.pairAgeSec != null ? `${Math.floor(w.pairAgeSec / 60)}m` : "—"}</TD>
                   <TD className="text-right">{w.score}</TD>
                   <TD className="space-x-1">
-                    {w.flags.slice(0, 2).map((f) => (
-                      <Badge key={f} variant="outline" className="text-[8px]">{f}</Badge>
-                    ))}
+                    <Badge variant="outline" className="text-[8px]">CYC {w.cycleCount}</Badge>
                   </TD>
                 </TR>
               ))}
