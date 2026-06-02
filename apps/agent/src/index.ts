@@ -259,6 +259,7 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
       momentum: c.market.momentum ?? existing?.momentum ?? 0,
     });
     if (isNew) {
+      log(`📋 ${c.symbol ?? c.mint.slice(0, 6)} added to watchlist`);
       reason(bus, `📋 ${c.symbol ?? c.mint.slice(0, 6)} added to watchlist — observing for pullback entry`, 0.5);
     }
   }
@@ -286,6 +287,7 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
 
     // Pullback check: only fire if we had a REAL positive peak and now dipped from it
     if (prevPeak > 0.05 && mom > 0 && mom < prevPeak * 0.6) {
+      log(`↘️ ${s.candidate.symbol ?? s.candidate.mint.slice(0, 6)} pullback ${(prevPeak * 100).toFixed(1)}%→${(mom * 100).toFixed(1)}%`);
       reason(bus, `↘️ ${s.candidate.symbol ?? s.candidate.mint.slice(0, 6)} pullback from peak ${(prevPeak * 100).toFixed(1)}% to ${(mom * 100).toFixed(1)}% — entering dip`, 0.6);
     }
 
@@ -394,16 +396,17 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
           // Smart money signal
           r.candidate.signals.smartWallets = intel.smartBuyers;
           if (intel.smartBuyers.length > 0) {
+            log(`💰 ${intel.smartBuyers.length} smart wallet(s) on ${r.candidate.symbol ?? r.candidate.mint.slice(0, 6)}`);
             reason(bus, `💰 ${intel.smartBuyers.length} smart wallet(s) detected on ${r.candidate.symbol ?? r.candidate.mint.slice(0, 6)}`, 0.8);
           }
 
-          // Bundle warning
           if (intel.bundledCount > 0) {
+            log(`🎭 BUNDLE: ${intel.bundledCount} wallets from same funder on ${r.candidate.symbol ?? r.candidate.mint.slice(0, 6)}`);
             reason(bus, `🎭 BUNDLE detected on ${r.candidate.symbol ?? r.candidate.mint.slice(0, 6)}: ${intel.bundledCount} wallet(s) from same funder — likely sniper/insider`, 0.75);
           }
 
-          // Fresh wallet warning
           if (intel.freshWalletCount > 0) {
+            log(`🆕 ${intel.freshWalletCount} fresh wallets on ${r.candidate.symbol ?? r.candidate.mint.slice(0, 6)}`);
             reason(bus, `🆕 ${intel.freshWalletCount} fresh wallet(s) (< 5 txns) detected — possible bot/sybil`, 0.7);
           }
         }
