@@ -108,6 +108,7 @@ export interface StateSnapshotEvent {
     winRate: number | null;
     avgPnlPct: number;
   }>;
+  smartWalletCount?: number;
 }
 
 // ─── Screening events (server → client) ───

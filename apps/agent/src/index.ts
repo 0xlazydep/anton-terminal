@@ -38,6 +38,7 @@ import { swapSell } from "@anton/solana";
 import { getTokenBalance } from "@anton/solana";
 import { SOL_MINT } from "@anton/solana";
 import { HeliusPriceFeed } from "@anton/solana";
+import { WalletIntel } from "@anton/solana";
 import type {
   AgentState,
   BalancePointSnapshot,
@@ -100,6 +101,7 @@ let lastWalletBalance = STARTING_SOL;
 const reflectedPositionIds = new Set<string>();
 const recentlyClosedMints = new Map<string, { closedAt: number; wasProfit: boolean }>();
 let db: Database | undefined;
+let walletIntel: WalletIntel | undefined;
 
 async function fetchWalletBalance(): Promise<void> {
   if (!env.SOLANA_PRIVATE_KEY || !env.SOLANA_RPC_URL) return;
@@ -144,10 +146,11 @@ async function buildStateSnapshot(book: PositionBook): Promise<StateSnapshotEven
 
   if (db) {
     try {
-      const { getRecentLessons, getPatternStats } = await import("@anton/data");
+      const { getRecentLessons, getPatternStats, getSmartWalletCount } = await import("@anton/data");
       result.recentLessons = await getRecentLessons(db, 20);
       const stats = await getPatternStats(db);
       result.patternStats = stats;
+      result.smartWalletCount = await getSmartWalletCount(db);
     } catch {
       // Non-fatal — return snapshot without learning data
     }
@@ -306,6 +309,36 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
     if (decidedMints.has(r.candidate.mint)) continue;
     decidedMints.add(r.candidate.mint);
 
+    // ── Smart-money wallet intelligence ──
+    if (walletIntel && db) {
+      try {
+        const buyers = await walletIntel.getRecentBuyers(r.candidate.mint, 15);
+        if (buyers.length > 0) {
+          const { getWalletScores, recordWalletSwap } = await import("@anton/data");
+          const addresses = buyers.map((b) => b.wallet);
+          const scores = await getWalletScores(db, addresses);
+          const smartBuyers = addresses.filter((a) => (scores.get(a) ?? 0.5) > 0.6);
+          r.candidate.signals.smartWallets = smartBuyers;
+
+          for (const b of buyers) {
+            await recordWalletSwap(db, {
+              wallet: b.wallet,
+              mint: r.candidate.mint,
+              side: "BUY",
+              tokenAmount: b.tokenDelta,
+              ts: b.ts,
+            }).catch(() => {});
+          }
+
+          if (smartBuyers.length > 0) {
+            reason(bus, `💰 Smart money detected: ${smartBuyers.length} known wallet(s) bought ${r.candidate.symbol ?? r.candidate.mint.slice(0, 6)}`, 0.8);
+          }
+        }
+      } catch {
+        // Non-fatal — wallet intel failures don't block trading
+      }
+    }
+
     for (const wallet of r.candidate.signals.smartWallets ?? []) {
       publishWalletEntered(bus, {
         wallet,
@@ -398,7 +431,7 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
   if (deepseek && portfolioSnap.positions.length > 0) {
     for (const pos of portfolioSnap.positions) {
       const posAgeSec = (Date.now() - pos.openedAt) / 1000;
-      if (posAgeSec < (CYCLE_MS / 1000) * 2) continue;
+      if (posAgeSec < 300) continue;
 
       try {
         const exitDecision = await decideExit(
@@ -442,6 +475,21 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
         closedAt: Date.now(),
         wasProfit: closed.pnlSol > 0,
       });
+
+      // Score wallets that bought this token based on its outcome
+      void (async () => {
+        if (!db) return;
+        try {
+          const { getWalletsForMint, upsertWalletScore } = await import("@anton/data");
+          const wallets = await getWalletsForMint(db, closed.mint);
+          const delta = closed.pnlSol > 0 ? 0.05 : -0.03;
+          for (const w of wallets) {
+            await upsertWalletScore(db, { address: w, trustDelta: delta }).catch(() => {});
+          }
+        } catch {
+          // Non-fatal
+        }
+      })();
 
       // Cleanup old cooldown entries periodically
       if (recentlyClosedMints.size > 200) {
@@ -513,6 +561,11 @@ async function bootstrap(): Promise<void> {
     } catch {
       log("helius ws: unavailable, falling back to dex screener polling");
     }
+  }
+
+  if (env.SOLANA_RPC_URL) {
+    walletIntel = new WalletIntel(createConnection(env.SOLANA_RPC_URL));
+    log("wallet intel: smart-money detection active");
   }
 
   const book = new PositionBook(

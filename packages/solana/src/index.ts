@@ -5,3 +5,4 @@ export * from "./priority-fee.js";
 export * from "./swap.js";
 export * from "./balance.js";
 export * from "./price-ws.js";
+export * from "./wallet-intel.js";

@@ -47,12 +47,19 @@ export function Learning() {
     queryFn: async () => [],
   });
 
+  const { data: smartWalletCount } = useQuery<number>({
+    queryKey: ["smart-wallet-count"],
+    initialData: 0,
+    queryFn: async () => 0,
+  });
+
   return (
     <Card className="h-full">
       <CardHeader>
         <div className="flex items-center gap-3">
           <CardTitle>LEARNING</CardTitle>
           <Badge variant="outline">ADAPTIVE · SELF-IMPROVING</Badge>
+          <Badge variant="outline">💰 {smartWalletCount} SMART WALLETS</Badge>
         </div>
       </CardHeader>
       <CardContent className="flex flex-row gap-3 p-3 overflow-auto">

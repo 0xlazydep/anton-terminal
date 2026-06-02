@@ -372,23 +372,28 @@ const EXIT_TOOL: DeepSeekTool = {
 
 function buildExitSystemPrompt(): string {
   return [
-    "You are Anton evaluating an OPEN position. Your job is to decide whether to HOLD or EXIT.",
+    "You are Anton evaluating an OPEN position. Decide HOLD or EXIT. Default bias: HOLD.",
     "",
-    "=== EXIT CRITERIA (exit when ANY of these are true) ===",
-    "1. Momentum has reversed — price was climbing but 5m change is now negative.",
-    "2. Profit is fading — you're up but momentum is dying; capture gains before reversal.",
-    "3. Loss is accelerating — already down and momentum continues negative.",
-    "4. Time decay — position is old (15+ min) with no meaningful movement (< 3% either way).",
+    "=== CRITICAL: GIVE POSITIONS ROOM TO BREATHE ===",
+    "Meme coins are volatile. A -5% dip in the first few minutes is NORMAL noise, not a reason to panic-exit.",
+    "Fast exits (< 5 min) with small losses are KILLING our PnL via fees. STOP doing this.",
+    "Let the mechanical stop-loss and trailing-stop handle exits. Only override them with a STRONG reason.",
     "",
-    "=== HOLD CRITERIA (hold when ALL of these are true) ===",
-    "1. Momentum is still positive or neutral.",
-    "2. You are in profit and the trend is intact.",
-    "3. You are in loss but within tolerance AND momentum hasn't turned sharply negative.",
+    "=== EXIT ONLY WHEN (need a CLEAR, strong signal) ===",
+    "1. Sharp dump: price dropped > 12% rapidly with sustained negative momentum (not just a dip).",
+    "2. Clear top: you're in solid profit (> 25%) AND momentum has decisively reversed negative.",
+    "3. Dead position: 20+ min old with < 2% movement and zero momentum (free up capital).",
+    "",
+    "=== HOLD (the default) WHEN ===",
+    "- Position is < 5 minutes old — give it time unless it's a sharp dump (> 12%).",
+    "- Loss is within stop-loss tolerance and not accelerating sharply.",
+    "- You're in profit and momentum is positive or neutral — let winners run.",
+    "- Small fluctuations either direction — this is normal meme coin noise.",
     "",
     "=== RULES ===",
-    "- When in doubt, EXIT. Protecting capital > missing a recovery.",
-    "- A small profit taken is better than a profit that becomes a loss.",
-    "- A 10% loss that could become 30% is an EXIT. A 10% loss that's stabilizing is a HOLD.",
+    "- Default to HOLD. Mechanical SL/TP/trailing-stop will catch real exits.",
+    "- Do NOT exit on minor dips or 'uncertainty' — that bleeds fees and caps winners early.",
+    "- A position needs a CLEAR reason to exit early, not just absence of confirmation.",
     "- Always call submit_exit_decision.",
   ].join("\n");
 }
@@ -456,21 +461,25 @@ export async function decideExit(
     }
   }
 
-  // Rule-based exit fallback
+  // Rule-based exit fallback — conservative, let mechanical stops do the work
   const { pnlPct, ageSec, slPct } = position;
   const momentum = market.momentum ?? 0;
 
-  if (pnlPct <= -(slPct * 0.75)) {
-    return { action: "EXIT", reason: `Approaching SL: ${pnlPct.toFixed(1)}% vs ${slPct}%`, confidence: 0.8 };
+  // Don't panic-exit fresh positions — give them room
+  if (ageSec < 300) {
+    return { action: "HOLD", reason: `Fresh position (${Math.floor(ageSec / 60)}m) — giving room to breathe`, confidence: 0.6 };
   }
-  if (pnlPct > 0 && momentum < -0.03) {
-    return { action: "EXIT", reason: `Profit ${pnlPct.toFixed(1)}% but momentum reversed ${momentum.toFixed(2)}`, confidence: 0.7 };
+  // Only exit on sharp loss approaching SL with negative momentum
+  if (pnlPct <= -(slPct * 0.9) && momentum < -0.02) {
+    return { action: "EXIT", reason: `Sharp loss ${pnlPct.toFixed(1)}% near SL with negative momentum`, confidence: 0.8 };
   }
-  if (pnlPct < -5 && momentum < -0.02) {
-    return { action: "EXIT", reason: `Loss ${pnlPct.toFixed(1)}% accelerating with momentum ${momentum.toFixed(2)}`, confidence: 0.75 };
+  // Capture strong profit only if momentum decisively reversed
+  if (pnlPct > 25 && momentum < -0.05) {
+    return { action: "EXIT", reason: `Strong profit ${pnlPct.toFixed(1)}% but momentum reversed hard`, confidence: 0.75 };
   }
-  if (ageSec > 1800 && Math.abs(pnlPct) < 3) {
-    return { action: "EXIT", reason: `Stale position: ${Math.floor(ageSec / 60)}min with no movement`, confidence: 0.65 };
+  // Dead position cleanup
+  if (ageSec > 1200 && Math.abs(pnlPct) < 2) {
+    return { action: "EXIT", reason: `Dead position: ${Math.floor(ageSec / 60)}min, no movement`, confidence: 0.65 };
   }
-  return { action: "HOLD", reason: `PnL ${pnlPct.toFixed(1)}%, momentum ${momentum.toFixed(2)} — holding`, confidence: 0.6 };
+  return { action: "HOLD", reason: `PnL ${pnlPct.toFixed(1)}%, holding — letting mechanical stops work`, confidence: 0.6 };
 }
