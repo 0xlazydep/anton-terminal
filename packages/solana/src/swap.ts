@@ -112,6 +112,15 @@ async function nativeBalanceLamports(connection: Connection, owner: PublicKey): 
   }
 }
 
+async function retryBalance(connection: Connection, owner: PublicKey, retries = 3): Promise<number | undefined> {
+  for (let i = 0; i < retries; i++) {
+    if (i > 0) await new Promise((r) => setTimeout(r, 600));
+    const bal = await nativeBalanceLamports(connection, owner);
+    if (bal !== undefined) return bal;
+  }
+  return undefined;
+}
+
 export async function swapBuy(p: SwapParams): Promise<SwapResult> {
   const maxPriorityFeeLamports = p.maxPriorityFeeLamports ?? 100_000;
   const priorityLevel = p.priorityLevel ?? "high";
@@ -141,9 +150,7 @@ export async function swapBuy(p: SwapParams): Promise<SwapResult> {
   });
   await p.connection.confirmTransaction(txSig, "confirmed");
 
-  const balAfter = await nativeBalanceLamports(p.connection, owner);
-  // For a BUY (input = SOL) the native balance drops by spent SOL + fees.
-  // For a SELL (output = SOL) it rises, so solSpentLamports is negative.
+  const balAfter = await retryBalance(p.connection, owner);
   let solSpentLamports: number | undefined;
   if (balBefore !== undefined && balAfter !== undefined) {
     solSpentLamports = balBefore - balAfter;
