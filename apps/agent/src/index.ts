@@ -101,6 +101,7 @@ let lastWalletBalance = STARTING_SOL;
 const reflectedPositionIds = new Set<string>();
 const recentlyClosedMints = new Map<string, { closedAt: number; wasProfit: boolean }>();
 const watchlistCounts = new Map<string, { count: number; symbol?: string; liquidityUsd?: number; pairAgeSec?: number; score: number; momentum: number }>();
+const peakMomentum = new Map<string, number>(); // mint → highest momentum seen across cycles
 let db: Database | undefined;
 let walletIntel: WalletIntel | undefined;
 
@@ -248,6 +249,7 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
     const c = s.candidate;
     if (!SOL_MINT_REGEX.test(c.mint)) continue;
     const existing = watchlistCounts.get(c.mint);
+    const isNew = !existing || existing.count === 0;
     watchlistCounts.set(c.mint, {
       count: (existing?.count ?? 0) + 1,
       symbol: c.symbol ?? existing?.symbol,
@@ -256,6 +258,9 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
       score: s.screeningEvt.score,
       momentum: c.market.momentum ?? existing?.momentum ?? 0,
     });
+    if (isNew) {
+      reason(bus, `📋 ${c.symbol ?? c.mint.slice(0, 6)} added to watchlist — observing for pullback entry`, 0.5);
+    }
   }
   // Cleanup old counts periodically
   if (watchlistCounts.size > 500) {
@@ -266,23 +271,22 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
 
   // Only allow BUY on tokens seen 2+ cycles (anti-FOMO)
   // Track peak momentum — enter on pullback from peak (not FOMO top)
-  const peakMomentum = new Map<string, number>();
   const eligible = safe.filter((s) => {
     const w = watchlistCounts.get(s.candidate.mint);
     const count = w?.count ?? 0;
     const mom = s.candidate.market.momentum ?? 0;
-    const prevPeak = peakMomentum.get(s.candidate.mint) ?? 0;
 
+    // Track highest momentum ever seen for this token
+    const prevPeak = peakMomentum.get(s.candidate.mint) ?? 0;
     if (mom > prevPeak) peakMomentum.set(s.candidate.mint, mom);
 
     if (count < 2) {
-      reason(bus, `👀 ${s.candidate.symbol ?? s.candidate.mint.slice(0, 6)} on watchlist — cycle ${count}/2 (momentum ${(mom*100).toFixed(1)}%)`, 0.5);
       return false;
     }
 
-    // Pullback check: don't buy at momentum peak, wait for dip
-    if (prevPeak > mom * 1.5) {
-      reason(bus, `↘️ ${s.candidate.symbol ?? s.candidate.mint.slice(0, 6)} pullback from peak ${(prevPeak*100).toFixed(1)}% to ${(mom*100).toFixed(1)}% — entering dip`, 0.6);
+    // Pullback check: only fire if we had a REAL positive peak and now dipped from it
+    if (prevPeak > 0.05 && mom > 0 && mom < prevPeak * 0.6) {
+      reason(bus, `↘️ ${s.candidate.symbol ?? s.candidate.mint.slice(0, 6)} pullback from peak ${(prevPeak * 100).toFixed(1)}% to ${(mom * 100).toFixed(1)}% — entering dip`, 0.6);
     }
 
     return true;
