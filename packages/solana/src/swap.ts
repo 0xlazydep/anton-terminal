@@ -113,8 +113,8 @@ async function nativeBalanceLamports(connection: Connection, owner: PublicKey): 
 }
 
 export async function swapBuy(p: SwapParams): Promise<SwapResult> {
-  const maxPriorityFeeLamports = p.maxPriorityFeeLamports ?? 1_000_000; // 0.001 SOL cap
-  const priorityLevel = p.priorityLevel ?? "veryHigh";
+  const maxPriorityFeeLamports = p.maxPriorityFeeLamports ?? 100_000;
+  const priorityLevel = p.priorityLevel ?? "high";
 
   const quote = await jupiterQuote({
     inputMint: p.inputMint,
