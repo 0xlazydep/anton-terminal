@@ -7,7 +7,7 @@ export const tradingConfigSchema = z.object({
   maxSpendSol: z.number().min(0.001).default(0.15),
   defaultSizeSol: z.number().min(0.001).default(0.12),
 
-  maxConcurrentPositions: z.number().int().min(1).default(5),
+  maxConcurrentPositions: z.number().int().min(1).default(3),
   maxEntriesPerMinute: z.number().int().min(1).default(6),
   preventDuplicateMint: z.boolean().default(true),
 

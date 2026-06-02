@@ -63,10 +63,14 @@ const config: TradingConfig = parseTradingConfig({
   mode: env.ANTON_MODE,
   screeningPreset: "normal",
   minLiquidityUsd: 8000,
-  maxConcurrentPositions: Number(process.env.ANTON_MAX_CONCURRENT_POSITIONS ?? 5),
+  maxConcurrentPositions: Number(process.env.ANTON_MAX_CONCURRENT_POSITIONS ?? 3),
   minSpendSol: Number(process.env.ANTON_MIN_SPEND_SOL ?? 0.1),
   maxSpendSol: Number(process.env.ANTON_MAX_SPEND_SOL ?? 0.15),
 });
+
+const MAX_TRADES_PER_DAY = 10;
+let tradesToday = 0;
+let tradeDayReset = Date.now();
 
 const REDIS_URL = env.REDIS_URL?.trim() ?? "";
 const useRedis = REDIS_URL.length > 0 && REDIS_URL !== "redis://localhost:6379";
@@ -203,8 +207,62 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
     }),
   );
 
-  // Only the strongest NSAFE candidates reach the decision engine.
-  const safe = screened.filter((s) => s.screeningEvt.verdict === "SAFE").slice(0, 4);
+  // Only the strongest SAFE candidates reach the decision engine.
+  // Holder quality gate: reject concentrated distribution (top10 > 60%).
+  const safe = screened
+    .filter((s) => s.screeningEvt.verdict === "SAFE")
+    .filter((s) => {
+      const top10 = s.report.top10Pct;
+      if (top10 !== undefined && top10 > 60) {
+        reason(bus, `👥 ${s.candidate.symbol ?? s.candidate.mint.slice(0, 6)} rejected — top 10 holders own ${top10.toFixed(0)}% (whale dump risk)`, 0.7);
+        return false;
+      }
+      return true;
+    })
+    .slice(0, 4);
+
+  // ── Meme Coin Market Regime ──
+  // Health gauged from agent's own recent closed trades (last 2h): how many
+  // sustained (TP/profit) vs dumped (SL). This reflects the LIVE meme ecosystem,
+  // not BTC/SOL. Combined with current candidate momentum distribution.
+  const recentClosed = book.snapshotState().history.filter(
+    (h) => h.closedAt && Date.now() - h.closedAt < 7200_000,
+  );
+  const sustainCount = recentClosed.filter((h) => h.pnlSol > 0).length;
+  const dumpCount = recentClosed.filter((h) => h.pnlPct <= -10).length;
+  const sustainRate = recentClosed.length >= 5
+    ? sustainCount / recentClosed.length
+    : 0.5;
+
+  const allMomentum = screened
+    .map((s) => s.candidate.market.momentum ?? 0)
+    .filter((m) => m !== 0);
+  const bullishRatio = allMomentum.length > 0
+    ? allMomentum.filter((m) => m > 0.02).length / allMomentum.length
+    : 0.5;
+
+  let regime: "bullish" | "sideways" | "bearish";
+  if (sustainRate >= 0.45 && bullishRatio > 0.4) regime = "bullish";
+  else if (sustainRate < 0.25 || (dumpCount >= 6 && sustainRate < 0.35)) regime = "bearish";
+  else regime = "sideways";
+
+  if (regime === "bearish") {
+    reason(bus, `🐻 MEME MARKET BEARISH · sustain ${(sustainRate * 100).toFixed(0)}% · ${dumpCount} dumps/2h — skipping entries, waiting for healthier conditions`, 0.9);
+    status(bus, "watching");
+    return;
+  }
+
+  // Daily trade cap
+  if (Date.now() - tradeDayReset > 86400_000) { tradesToday = 0; tradeDayReset = Date.now(); }
+  if (tradesToday >= MAX_TRADES_PER_DAY) {
+    reason(bus, `📊 Daily trade cap reached (${MAX_TRADES_PER_DAY}/day) — waiting for next cycle`, 0.8);
+    status(bus, "watching");
+    return;
+  }
+
+  if (regime === "sideways") {
+    reason(bus, `↔️ Market regime: SIDEWAYS (${(bullishRatio * 100).toFixed(0)}% bullish) — high conviction only`, 0.6);
+  }
   const decidedMints = new Set<string>();
 
   // Gather portfolio context for enriched LLM decisions
@@ -294,6 +352,12 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
     });
 
     if (decision.action === "BUY" && decision.size_sol) {
+      // Sideways market: high conviction only
+      if (regime === "sideways" && decision.confidence < 0.7) {
+        reason(bus, `↔️ Sideways market — skipping ${decision.symbol ?? ""} (conviction ${decision.confidence.toFixed(2)} < 0.7)`, decision.confidence);
+        continue;
+      }
+
       if (dailyLossExceeded) {
         reason(bus, `⛔ Daily loss cap ${config.maxDailyLossSol} SOL reached (${realizedToday.toFixed(3)}) · skipping ${decision.symbol ?? ""}`, 0.9);
       } else if (book.atCapacity()) {
@@ -307,7 +371,8 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
           r.candidate.market.marketCapUsd ?? r.candidate.market.fdvUsd,
         );
         if (opened) {
-          reason(bus, `Opened ${config.mode} position ${decision.symbol ?? ""} · ${decision.size_sol} SOL`, decision.confidence);
+          tradesToday++;
+          reason(bus, `Opened ${config.mode} position ${decision.symbol ?? ""} · ${decision.size_sol} SOL (${tradesToday}/${MAX_TRADES_PER_DAY} today)`, decision.confidence);
         } else {
           reason(bus, `⛔ Swap failed for ${decision.symbol ?? ""} — check liquidity or pool availability`, 0.6);
         }

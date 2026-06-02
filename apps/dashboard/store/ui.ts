@@ -49,7 +49,7 @@ export const useUI = create<UIState>()(
       mode: "dry-run",
       minSpendSol: 0.1,
       maxSpendSol: 0.5,
-      maxConcurrent: 5,
+      maxConcurrent: 3,
       dailyLossCapSol: 1,
       defaultStopLossPct: 12,
       defaultTakeProfitPct: 45,
