@@ -121,6 +121,10 @@ function snapshot(bus: EventBus, book: PositionBook, db?: Database): void {
     startingSol: STARTING_SOL,
     solBalance,
     totalPnlSol,
+    watchlist: [...watchlistCounts.entries()]
+      .filter(([_, w]) => w.count === 1)
+      .map(([mint, w]) => ({ mint, symbol: w.symbol, cycleCount: w.count, momentum: w.momentum, score: w.score, liquidityUsd: w.liquidityUsd, pairAgeSec: w.pairAgeSec }))
+      .slice(0, 10),
   });
 
   balanceHistory.push({ ts, solBalance });
@@ -785,6 +789,10 @@ async function bootstrap(): Promise<void> {
             startingSol: STARTING_SOL,
             solBalance,
             totalPnlSol,
+            watchlist: [...watchlistCounts.entries()]
+              .filter(([_, w]) => w.count === 1)
+              .map(([mint, w]) => ({ mint, symbol: w.symbol, cycleCount: w.count, momentum: w.momentum, score: w.score, liquidityUsd: w.liquidityUsd, pairAgeSec: w.pairAgeSec }))
+              .slice(0, 10),
           });
           balanceHistory.push({ ts, solBalance });
           if (balanceHistory.length > MAX_BALANCE_POINTS) balanceHistory.shift();

@@ -258,6 +258,9 @@ export function useRealtime(): void {
 
     const onHoldingsSnapshot = (evt: HoldingsSnapshotEvent) => {
       setSolBalance(evt.solBalance);
+      if (evt.watchlist) {
+        qc.setQueryData(["watchlist"], evt.watchlist);
+      }
     };
 
     const onStateSnapshot = (evt: StateSnapshotEvent) => {

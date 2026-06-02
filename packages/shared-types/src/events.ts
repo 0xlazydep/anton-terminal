@@ -54,6 +54,7 @@ export interface HoldingsSnapshotEvent {
   startingSol: number;
   solBalance: number;
   totalPnlSol: number;
+  watchlist?: Array<{ mint: string; symbol?: string; cycleCount: number; momentum: number; score: number; liquidityUsd?: number; pairAgeSec?: number }>;
 }
 
 /** A single open position, fully hydrated for the dashboard table. */
