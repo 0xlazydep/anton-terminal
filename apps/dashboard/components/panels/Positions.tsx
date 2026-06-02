@@ -111,12 +111,6 @@ export function Positions() {
               HISTORY
               <Badge variant="outline" className="ml-2">{history.length}</Badge>
             </TabsTrigger>
-            <TabsTrigger value="history">
-              HISTORY
-              <Badge variant="outline" className="ml-2">
-                {history.length}
-              </Badge>
-            </TabsTrigger>
           </TabsList>
           <div className="flex items-center gap-2 tabular-nums">
             <span className="label-mono">

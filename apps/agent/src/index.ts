@@ -100,7 +100,7 @@ const balanceHistory: BalancePointSnapshot[] = [];
 let lastWalletBalance = STARTING_SOL;
 const reflectedPositionIds = new Set<string>();
 const recentlyClosedMints = new Map<string, { closedAt: number; wasProfit: boolean }>();
-const watchlistCounts = new Map<string, number>(); // mint → cycles seen
+const watchlistCounts = new Map<string, { count: number; symbol?: string; liquidityUsd?: number; pairAgeSec?: number; score: number; momentum: number }>();
 let db: Database | undefined;
 let walletIntel: WalletIntel | undefined;
 
@@ -144,12 +144,15 @@ async function buildStateSnapshot(book: PositionBook): Promise<StateSnapshotEven
     startingSol: STARTING_SOL,
     mode: config.mode,
     watchlist: [...watchlistCounts.entries()]
-      .filter(([_, count]) => count === 1)
-      .map(([mint]) => ({
+      .filter(([_, w]) => w.count === 1)
+      .map(([mint, w]) => ({
         mint,
-        cycleCount: 1,
-        momentum: 0,
-        score: 0,
+        symbol: w.symbol,
+        cycleCount: w.count,
+        momentum: w.momentum,
+        score: w.score,
+        liquidityUsd: w.liquidityUsd,
+        pairAgeSec: w.pairAgeSec,
       }))
       .slice(0, 10),
   };
@@ -234,14 +237,23 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
     })
     .slice(0, 4);
 
-  // Watchlist: update cycle counts for all candidates (seen = sustained interest)
-  for (const c of candidates) {
-    watchlistCounts.set(c.mint, (watchlistCounts.get(c.mint) ?? 0) + 1);
+  // Watchlist: update for SAFE candidates only (others aren't eligible)
+  for (const s of safe) {
+    const c = s.candidate;
+    const existing = watchlistCounts.get(c.mint);
+    watchlistCounts.set(c.mint, {
+      count: (existing?.count ?? 0) + 1,
+      symbol: c.symbol ?? existing?.symbol,
+      liquidityUsd: s.screeningEvt.liquidityUsd ?? existing?.liquidityUsd,
+      pairAgeSec: s.screeningEvt.pairAgeSec ?? existing?.pairAgeSec,
+      score: s.screeningEvt.score,
+      momentum: c.market.momentum ?? existing?.momentum ?? 0,
+    });
   }
   // Cleanup old counts periodically
   if (watchlistCounts.size > 500) {
-    for (const [mint, count] of watchlistCounts) {
-      if (count <= 3) watchlistCounts.delete(mint);
+    for (const [mint, w] of watchlistCounts) {
+      if (w.count <= 3) watchlistCounts.delete(mint);
     }
   }
 
@@ -249,7 +261,8 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
   // Track peak momentum — enter on pullback from peak (not FOMO top)
   const peakMomentum = new Map<string, number>();
   const eligible = safe.filter((s) => {
-    const count = watchlistCounts.get(s.candidate.mint) ?? 0;
+    const w = watchlistCounts.get(s.candidate.mint);
+    const count = w?.count ?? 0;
     const mom = s.candidate.market.momentum ?? 0;
     const prevPeak = peakMomentum.get(s.candidate.mint) ?? 0;
 
