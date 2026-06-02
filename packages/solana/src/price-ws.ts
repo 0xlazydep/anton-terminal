@@ -45,8 +45,12 @@ export class HeliusPriceFeed {
       };
 
       this.ws.onmessage = (event: MessageEvent) => {
-        const data = JSON.parse(event.data as string);
-        this.handleMessage(data);
+        try {
+          const data = JSON.parse(event.data as string);
+          this.handleMessage(data);
+        } catch {
+          // Ignore non-JSON messages (connection status, etc.)
+        }
       };
 
       this.ws.onclose = () => {
