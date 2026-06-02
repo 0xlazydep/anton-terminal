@@ -235,18 +235,11 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
   const dumpCount = recentClosed.filter((h) => h.pnlPct <= -10).length;
   const sustainRate = recentClosed.length >= 5
     ? sustainCount / recentClosed.length
-    : 0.5;
-
-  const allMomentum = screened
-    .map((s) => s.candidate.market.momentum ?? 0)
-    .filter((m) => m !== 0);
-  const bullishRatio = allMomentum.length > 0
-    ? allMomentum.filter((m) => m > 0.02).length / allMomentum.length
-    : 0.5;
+    : -1; // cold start / insufficient data
 
   let regime: "bullish" | "sideways" | "bearish";
   if (sustainRate >= 0.45 && bullishRatio > 0.4) regime = "bullish";
-  else if (sustainRate < 0.25 || (dumpCount >= 6 && sustainRate < 0.35)) regime = "bearish";
+  else if (sustainRate < 0 || sustainRate < 0.25 || (dumpCount >= 6 && sustainRate < 0.35)) regime = "bearish";
   else regime = "sideways";
 
   if (regime === "bearish") {
