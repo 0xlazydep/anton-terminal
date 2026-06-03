@@ -106,6 +106,7 @@ const reflectedPositionIds = new Set<string>();
 const recentlyClosedMints = new Map<string, { closedAt: number; wasProfit: boolean }>();
 const watchlistCounts = new Map<string, { count: number; symbol?: string; liquidityUsd?: number; pairAgeSec?: number; score: number; momentum: number }>();
 const peakMomentum = new Map<string, number>(); // mint → highest momentum seen across cycles
+const recentScreened = new Map<string, { symbol?: string; score: number; verdict: string; flags: string[]; liquidityUsd?: number; pairAgeSec?: number; source?: string; llmAction?: "BUY" | "SKIP" }>();
 let db: Database | undefined;
 let walletIntel: WalletIntel | undefined;
 
@@ -237,6 +238,11 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
         source: candidate.source,
       };
       publishScreening(bus, screeningEvt);
+      recentScreened.set(screeningEvt.mint, {
+        symbol: screeningEvt.symbol, score: screeningEvt.score, verdict: screeningEvt.verdict,
+        flags: screeningEvt.flags, liquidityUsd: screeningEvt.liquidityUsd, pairAgeSec: screeningEvt.pairAgeSec,
+        source: screeningEvt.source,
+      });
       screened.push({ candidate, report, screeningEvt });
     }),
   );
@@ -486,9 +492,15 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
     );
 
     // Update screening row with LLM decision (BUY or SKIP)
+    const llmAction = decision.action === "BUY" ? "BUY" : "SKIP";
     publishScreening(bus, {
       ...r.screeningEvt,
-      llmAction: decision.action === "BUY" ? "BUY" : "SKIP",
+      llmAction,
+    });
+    recentScreened.set(r.screeningEvt.mint, {
+      symbol: r.screeningEvt.symbol, score: r.screeningEvt.score, verdict: r.screeningEvt.verdict,
+      flags: r.screeningEvt.flags, liquidityUsd: r.screeningEvt.liquidityUsd, pairAgeSec: r.screeningEvt.pairAgeSec,
+      source: r.screeningEvt.source, llmAction,
     });
 
     if (decision.action === "BUY" && decision.size_sol) {
@@ -904,6 +916,31 @@ async function bootstrap(): Promise<void> {
     }
   }, 15_000);
 
+  // Batch Jupiter poll — update MC for all screening tokens every 2s
+  const screeningPollTimer = setInterval(async () => {
+    if (recentScreened.size === 0) return;
+    const mints = [...recentScreened.keys()].slice(0, 30);
+    try {
+      const url = `https://api.jup.ag/price/v2?ids=${mints.join(",")}&showExtraInfo=true`;
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const json = (await res.json()) as { data?: Record<string, { price: string; extraInfo?: { marketCap?: string } }> };
+      if (!json.data) return;
+      for (const [mint, info] of Object.entries(json.data)) {
+        const row = recentScreened.get(mint);
+        if (!row) continue;
+        const price = parseFloat(info.price) || 0;
+        if (price <= 0) continue;
+        const mc = info.extraInfo?.marketCap ? parseFloat(info.extraInfo.marketCap) : undefined;
+        publishScreening(bus, {
+          mint, symbol: row.symbol, score: row.score, verdict: row.verdict as "SAFE" | "CAUTION" | "REJECT",
+          flags: row.flags, liquidityUsd: row.liquidityUsd, marketCapUsd: mc, pairAgeSec: row.pairAgeSec,
+          ts: Date.now(), source: row.source as any, llmAction: row.llmAction,
+        });
+      }
+    } catch {}
+  }, 2000);
+
   let running = true;
   const loop = async (): Promise<void> => {
     await new Promise((r) => setTimeout(r, 500));
@@ -928,6 +965,7 @@ async function bootstrap(): Promise<void> {
     clearInterval(tickTimer);
     clearInterval(balTimer);
     clearInterval(reconTimer);
+    clearInterval(screeningPollTimer);
     server?.close();
     priceFeed?.close();
     void bus.close();
