@@ -42,6 +42,7 @@ import { getTokenBalance } from "@anton/solana";
 import { SOL_MINT } from "@anton/solana";
 import { HeliusPriceFeed } from "@anton/solana";
 import { WalletIntel } from "@anton/solana";
+import { PublicKey } from "@solana/web3.js";
 import type {
   AgentState,
   BalancePointSnapshot,
@@ -109,6 +110,34 @@ const peakMomentum = new Map<string, number>(); // mint → highest momentum see
 const recentScreened = new Map<string, { symbol?: string; score: number; verdict: string; flags: string[]; liquidityUsd?: number; pairAgeSec?: number; source?: string; llmAction?: "BUY" | "SKIP" }>();
 let db: Database | undefined;
 let walletIntel: WalletIntel | undefined;
+
+const PUMP_FUN_PROGRAM = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
+
+async function fetchBondingCurvePrice(mint: string): Promise<{ priceUsd: number; mcUsd?: number } | undefined> {
+  try {
+    const [pda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("bonding-curve"), new PublicKey(mint).toBuffer()],
+      PUMP_FUN_PROGRAM,
+    );
+    const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY ?? ""}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getAccountInfo", params: [pda.toBase58(), { encoding: "base64" }] }),
+    });
+    if (!res.ok) return;
+    const json = (await res.json()) as { result?: { value?: { data?: [string, string] } } };
+    const raw = json.result?.value?.data?.[0];
+    if (!raw) return;
+    const buf = Buffer.from(raw, "base64");
+    if (buf.length < 48) return;
+    const vt = Number(buf.readBigUInt64LE(8));
+    const vs = Number(buf.readBigUInt64LE(16));
+    const sup = Number(buf.readBigUInt64LE(40));
+    if (vt <= 0) return;
+    const priceSol = (vs / 1e9) / (vt / 1e6);
+    const solUsd = 130;
+    return { priceUsd: priceSol * solUsd, mcUsd: sup > 0 ? priceSol * solUsd * (sup / 1e6) : undefined };
+  } catch { return; }
+}
 
 async function fetchWalletBalance(): Promise<void> {
   if (!env.SOLANA_PRIVATE_KEY || !env.SOLANA_RPC_URL) return;
@@ -941,11 +970,22 @@ async function bootstrap(): Promise<void> {
           });
         }
       }
-      // DexScreener fallback for tokens Jupiter missed
+      // DexScreener + bonding curve fallback for tokens Jupiter missed
       const missed = mints.filter((m) => !found.has(m));
       for (const mint of missed) {
         const row = recentScreened.get(mint);
         if (!row) continue;
+        // Try bonding curve first (Pump.fun tokens — 0ms on-chain)
+        const curve = await fetchBondingCurvePrice(mint);
+        if (curve && curve.priceUsd > 0) {
+          publishScreening(bus, {
+            mint, symbol: row.symbol, score: row.score, verdict: row.verdict as any,
+            flags: row.flags, liquidityUsd: row.liquidityUsd, marketCapUsd: curve.mcUsd, pairAgeSec: row.pairAgeSec,
+            ts: Date.now(), source: row.source as any, llmAction: row.llmAction,
+          });
+          continue;
+        }
+        // Last resort: DexScreener
         try {
           const { fetchTokenMarket } = await import("@anton/ingestion");
           const snap = await fetchTokenMarket(mint);
