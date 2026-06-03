@@ -1,33 +1,27 @@
 /**
- * Real-time price feed — pure Helius WebSocket, no aggregators:
+ * Real-time price feed — pure Helius WebSocket, zero external dependencies.
  *
- *   1. accountSubscribe on pump.fun bonding-curve PDA
- *      → Decodes virtual reserves directly. Sub-100ms, exact on-chain price.
+ *   accountSubscribe on pump.fun bonding-curve PDA
+ *   → Decodes virtual reserves directly from on-chain account data.
+ *   → Sub-100ms, exact on-chain price. Every buy/sell triggers a push.
  *
- *   2. logsSubscribe with { mentions: [mint] }
- *      → Fires on EVERY swap/trade mentioning the token on ANY DEX.
- *      → Triggers an immediate Jupiter price fetch (debounced 50ms).
- *      → Covers ALL tokens, not just pump.fun.
- *
- *   3. Jupiter REST polling at 500ms
- *      → Fallback safety net when WS subscriptions fail.
+ *   Jupiter REST polling at 1000ms
+ *   → Fallback safety net for graduated/non-pumpfun tokens.
  */
 
 import { Connection, PublicKey } from "@solana/web3.js";
-import type { AccountInfo, Context, Logs } from "@solana/web3.js";
+import type { AccountInfo, Context } from "@solana/web3.js";
 
 const PUMP_PROGRAM = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
 const JUPITER_URL = "https://api.jup.ag/price/v2";
-const JUPITER_POLL_MS = 500;
-const DEBOUNCE_MS = 50;
+const JUPITER_POLL_MS = 1000;
 const SOL_USD_FALLBACK = 130;
 const BONDING_CURVE_SEED = Buffer.from("bonding-curve");
 
 export interface PriceUpdate {
   priceUsd: number;
   marketCapUsd?: number;
-  source: "ws-bonding-curve" | "ws-logs-trigger" | "jupiter-rest";
-  /** Timestamp when this update was received (for latency measurement). */
+  source: "ws-bonding-curve" | "jupiter-rest";
   receivedAt?: number;
 }
 
@@ -37,9 +31,7 @@ interface SubEntry {
   mint: string;
   callback: PriceCallback;
   accountSubId: number | null;
-  logsSubId: number | null;
   jupiterTimer: ReturnType<typeof setInterval> | null;
-  debounceTimer: ReturnType<typeof setTimeout> | null;
   pda: PublicKey | null;
   solUsd: number;
 }
@@ -57,12 +49,6 @@ export class RealtimePriceFeed {
     return !this.closed;
   }
 
-  /**
-   * Subscribe to real-time price updates for a token mint.
-   * Layer 1: bonding-curve PDA (pump.fun) — sub-100ms, exact on-chain price.
-   * Layer 2: logsSubscribe (all DEXes) — triggers price fetch on any trade.
-   * Layer 3: Jupiter polling at 500ms — safety net.
-   */
   async subscribe(mint: string, callback: PriceCallback): Promise<number> {
     if (this.subs.has(mint)) return 0;
 
@@ -70,21 +56,17 @@ export class RealtimePriceFeed {
       mint,
       callback,
       accountSubId: null,
-      logsSubId: null,
       jupiterTimer: null,
-      debounceTimer: null,
       pda: null,
       solUsd: SOL_USD_FALLBACK,
     };
     this.subs.set(mint, entry);
 
-    // Fetch live SOL/USD for bonding-curve MC calculation
     void this.fetchSolUsd(entry);
+    void this.fetchJupiter(entry);
 
-    // Immediate first price fetch
-    void this.fetchJupiter(entry, "jupiter-rest");
-
-    // Layer 1: accountSubscribe on pump.fun bonding-curve PDA
+    // accountSubscribe on pump.fun bonding-curve PDA
+    // → every on-chain buy/sell pushes updated virtual reserves
     try {
       const mintPk = new PublicKey(mint);
       const [pda] = PublicKey.findProgramAddressSync(
@@ -99,29 +81,16 @@ export class RealtimePriceFeed {
         "processed",
       );
     } catch {
-      // PDA derivation failed — token may not be pump.fun
+      // PDA derivation failed — Jupiter polling covers it
     }
 
-    // Layer 2: logsSubscribe — fires on ANY swap/trade mentioning this token
-    try {
-      // @solana/web3.js v1 types don't expose LogsFilter, but RPC supports it
-      entry.logsSubId = (this.connection.onLogs as Function)(
-        { mentions: [mint] },
-        { mentions: [mint] },
-        (_logs: Logs, _ctx: Context) => this.onTradeDetected(entry),
-        "processed",
-      );
-    } catch {
-      // logsSubscribe failed — Jupiter polling covers it
-    }
-
-    // Layer 3: Jupiter polling at 500ms (always runs as safety net)
+    // Jupiter REST polling at 1s
     entry.jupiterTimer = setInterval(() => {
       if (!this.subs.has(mint)) {
         clearInterval(entry.jupiterTimer!);
         return;
       }
-      void this.fetchJupiter(entry, "jupiter-rest");
+      void this.fetchJupiter(entry);
     }, JUPITER_POLL_MS);
 
     return 0;
@@ -135,11 +104,7 @@ export class RealtimePriceFeed {
     if (entry.accountSubId !== null) {
       this.connection.removeAccountChangeListener(entry.accountSubId).catch(() => {});
     }
-    if (entry.logsSubId !== null) {
-      this.connection.removeOnLogsListener(entry.logsSubId).catch(() => {});
-    }
     if (entry.jupiterTimer) clearInterval(entry.jupiterTimer);
-    if (entry.debounceTimer) clearTimeout(entry.debounceTimer);
   }
 
   close(): void {
@@ -149,7 +114,6 @@ export class RealtimePriceFeed {
     }
   }
 
-  /** Bonding-curve account changed → decode virtual reserves → push exact price. */
   private onBondingCurveUpdate(entry: SubEntry, data: Buffer): void {
     if (data.length < 48) return;
     const vt = Number(data.readBigUInt64LE(8));
@@ -169,22 +133,7 @@ export class RealtimePriceFeed {
     });
   }
 
-  /**
-   * A swap/trade mentioning this token just landed on-chain.
-   * Debounce 50ms to batch rapid trades, then fetch the latest Jupiter price.
-   */
-  private onTradeDetected(entry: SubEntry): void {
-    if (entry.debounceTimer) clearTimeout(entry.debounceTimer);
-    entry.debounceTimer = setTimeout(() => {
-      entry.debounceTimer = null;
-      void this.fetchJupiter(entry, "ws-logs-trigger");
-    }, DEBOUNCE_MS);
-  }
-
-  private async fetchJupiter(
-    entry: SubEntry,
-    source: "jupiter-rest" | "ws-logs-trigger",
-  ): Promise<void> {
+  private async fetchJupiter(entry: SubEntry): Promise<void> {
     try {
       const r = await fetch(`${JUPITER_URL}?ids=${entry.mint}&showExtraInfo=true`);
       if (!r.ok) return;
@@ -198,11 +147,11 @@ export class RealtimePriceFeed {
       entry.callback({
         priceUsd: p,
         marketCapUsd: d.extraInfo?.marketCap ? parseFloat(d.extraInfo.marketCap) : undefined,
-        source,
+        source: "jupiter-rest",
         receivedAt: Date.now(),
       });
     } catch {
-      // Non-fatal — next event or poll will retry
+      // Non-fatal — next poll retries
     }
   }
 
@@ -224,7 +173,7 @@ export class RealtimePriceFeed {
 }
 
 /**
- * Backward-compatible wrapper around the legacy (priceUsd, marketCapUsd, meta?) signature.
+ * Backward-compatible wrapper.
  */
 export class HeliusPriceFeed {
   private feed: RealtimePriceFeed | null = null;
@@ -244,7 +193,6 @@ export class HeliusPriceFeed {
         legacyCb(update.priceUsd, update.marketCapUsd, { source: update.source });
       });
     }
-    // No connection → standalone Jupiter polling
     const interval = setInterval(async () => {
       try {
         const r = await fetch(`${JUPITER_URL}?ids=${mint}&showExtraInfo=true`);
