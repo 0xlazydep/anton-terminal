@@ -289,6 +289,7 @@ export class PositionBook {
           } else if (marketCapUsd && marketCapUsd > 0) {
             p.currentMarketCapUsd = marketCapUsd;
           }
+          process.stderr.write(`[pos] ${p.symbol ?? p.mint.slice(0,6)} price=${priceUsd.toExponential(2)} mc=${((p.currentMarketCapUsd ?? 0)/1000).toFixed(1)}K src=${"?"}\n`);
         }
         p.lastWsPrice = Date.now();
         const pnl = this.pnlPct(p);
