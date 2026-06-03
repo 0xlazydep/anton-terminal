@@ -954,6 +954,7 @@ async function bootstrap(): Promise<void> {
     if (recentScreened.size === 0) return;
     const mints = [...recentScreened.keys()].slice(0, 30);
     const found = new Set<string>();
+    let jupData: Record<string, { price: string; extraInfo?: { marketCap?: string } }> | undefined;
     try {
       // Pass 1: Pump.fun tokens via bonding curve (on-chain, real-time)
       const pumpMints = mints.filter((m) => m.endsWith("pump"));
@@ -978,7 +979,8 @@ async function bootstrap(): Promise<void> {
         const res = await fetch(url);
         if (res.ok) {
           const json = (await res.json()) as { data?: Record<string, { price: string; extraInfo?: { marketCap?: string } }> };
-          if (json.data) {
+        jupData = json.data;
+        if (json.data) {
             for (const [mint, info] of Object.entries(json.data)) {
               found.add(mint);
               const row = recentScreened.get(mint);
@@ -1019,6 +1021,15 @@ async function bootstrap(): Promise<void> {
         const curve = await fetchBondingCurvePrice(pos.mint);
         if (curve && curve.priceUsd > 0) {
           book.updateFromPoll(pos.id, curve.priceUsd, curve.mcUsd);
+        } else {
+          const jupInfo = jupData?.[pos.mint];
+          if (jupInfo) {
+            const price = parseFloat(jupInfo.price) || 0;
+            if (price > 0) {
+              const mc = jupInfo.extraInfo?.marketCap ? parseFloat(jupInfo.extraInfo.marketCap) : undefined;
+              book.updateFromPoll(pos.id, price, mc);
+            }
+          }
         }
       }
     } catch {}
