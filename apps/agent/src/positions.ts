@@ -360,6 +360,17 @@ export class PositionBook {
       if (snap.marketCapUsd && snap.marketCapUsd > 0) {
         pos.currentMarketCapUsd = snap.marketCapUsd;
       }
+      if (pos.lastWsPrice === 0 || Date.now() - pos.lastWsPrice >= 10_000) {
+        const pnl = this.pnlPct(pos);
+        publishPositionUpdate(this.bus, {
+          id: pos.id,
+          currentPriceUsd: pos.currentPriceUsd,
+          currentMarketCapUsd: pos.currentMarketCapUsd,
+          pnlPct: pnl,
+          slPct: pos.slPct,
+          tpPct: pos.tpPct,
+        });
+      }
     } catch {
       return;
     }
