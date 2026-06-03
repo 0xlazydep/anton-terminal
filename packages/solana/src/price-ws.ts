@@ -128,6 +128,7 @@ export class HeliusPriceFeed {
       if (sub.mint !== mint) continue;
       sub.lastPrice = price;
       sub.callback(price);
+      this.fetchJupiter(mint, sub.callback);
     }
   }
 
@@ -227,7 +228,11 @@ export class HeliusPriceFeed {
       if (price <= 0) return;
       const mc = d.extraInfo?.marketCap ? parseFloat(d.extraInfo.marketCap) : undefined;
       cb(price, mc);
-    } catch {}
+    } catch (err: unknown) {
+      if ((err as Error)?.message?.includes("429") || String(err).includes("429")) {
+        process.stderr.write(`[price-ws] Jupiter 429 rate-limit for ${mint.slice(0, 8)}\n`);
+      }
+    }
   }
 
   unsubscribe(subId: number): void {
