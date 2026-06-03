@@ -756,13 +756,13 @@ async function bootstrap(): Promise<void> {
         }
 
         priceFeed.setConnection(wsConnection);
-        log(`price feed: Helius WS active (bonding-curve accountSubscribe) + Jupiter 1s fallback`);
+        log(`price feed: Helius WS active (bonding-curve + logsSubscribe) + Jupiter 1s fallback`);
         log(`price feed: SOL/USD $${solUsd.toFixed(2)}`);
       } catch (err) {
         log(`price feed: WS setup failed — Jupiter polling 1s (${String(err).slice(0, 60)})`);
       }
     } else {
-      log("price feed: Jupiter polling 1s (no WS endpoint configured)");
+      log("price feed: Jupiter polling 1s (no WS configured — slow)");
     }
   }
 

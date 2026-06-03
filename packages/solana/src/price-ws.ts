@@ -10,18 +10,19 @@
  */
 
 import { Connection, PublicKey } from "@solana/web3.js";
-import type { AccountInfo, Context } from "@solana/web3.js";
+import type { AccountInfo, Context, Logs } from "@solana/web3.js";
 
 const PUMP_PROGRAM = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
 const JUPITER_URL = "https://api.jup.ag/price/v2";
 const JUPITER_POLL_MS = 1000;
+const DEBOUNCE_MS = 50;
 const SOL_USD_FALLBACK = 130;
 const BONDING_CURVE_SEED = Buffer.from("bonding-curve");
 
 export interface PriceUpdate {
   priceUsd: number;
   marketCapUsd?: number;
-  source: "ws-bonding-curve" | "jupiter-rest";
+  source: "ws-bonding-curve" | "ws-logs-trigger" | "jupiter-rest";
   receivedAt?: number;
 }
 
@@ -31,7 +32,9 @@ interface SubEntry {
   mint: string;
   callback: PriceCallback;
   accountSubId: number | null;
+  logsSubId: number | null;
   jupiterTimer: ReturnType<typeof setInterval> | null;
+  debounceTimer: ReturnType<typeof setTimeout> | null;
   pda: PublicKey | null;
   solUsd: number;
 }
@@ -56,7 +59,9 @@ export class RealtimePriceFeed {
       mint,
       callback,
       accountSubId: null,
+      logsSubId: null,
       jupiterTimer: null,
+      debounceTimer: null,
       pda: null,
       solUsd: SOL_USD_FALLBACK,
     };
@@ -82,7 +87,19 @@ export class RealtimePriceFeed {
         );
         process.stderr.write(`[feed] bonding-curve sub active for ${mint.slice(0, 8)}\n`);
       } catch {
-        process.stderr.write(`[feed] bonding-curve sub failed for ${mint.slice(0, 8)} — Jupiter only\n`);
+        process.stderr.write(`[feed] bonding-curve sub failed for ${mint.slice(0, 8)}\n`);
+      }
+
+      // Layer 2: logsSubscribe with mentions filter — fires on ANY swap on ANY DEX
+      try {
+        entry.logsSubId = this.connection.onLogs(
+          { mentions: [mint] } as any,
+          (_logs: Logs, _ctx: Context) => this.onTradeDetected(entry),
+          "processed",
+        );
+        process.stderr.write(`[feed] logs-sub active for ${mint.slice(0, 8)}\n`);
+      } catch {
+        process.stderr.write(`[feed] logs-sub failed for ${mint.slice(0, 8)}\n`);
       }
 
     // Jupiter REST polling at 1s
@@ -105,7 +122,11 @@ export class RealtimePriceFeed {
     if (entry.accountSubId !== null) {
       this.connection.removeAccountChangeListener(entry.accountSubId).catch(() => {});
     }
+    if (entry.logsSubId !== null) {
+      this.connection.removeOnLogsListener(entry.logsSubId).catch(() => {});
+    }
     if (entry.jupiterTimer) clearInterval(entry.jupiterTimer);
+    if (entry.debounceTimer) clearTimeout(entry.debounceTimer);
   }
 
   close(): void {
@@ -134,7 +155,18 @@ export class RealtimePriceFeed {
     });
   }
 
-  private async fetchJupiter(entry: SubEntry): Promise<void> {
+  private onTradeDetected(entry: SubEntry): void {
+    if (entry.debounceTimer) clearTimeout(entry.debounceTimer);
+    entry.debounceTimer = setTimeout(() => {
+      entry.debounceTimer = null;
+      void this.fetchJupiter(entry, "ws-logs-trigger");
+    }, DEBOUNCE_MS);
+  }
+
+  private async fetchJupiter(
+    entry: SubEntry,
+    source: "jupiter-rest" | "ws-logs-trigger" = "jupiter-rest",
+  ): Promise<void> {
     try {
       const r = await fetch(`${JUPITER_URL}?ids=${entry.mint}&showExtraInfo=true`);
       if (!r.ok) return;
@@ -148,7 +180,7 @@ export class RealtimePriceFeed {
       entry.callback({
         priceUsd: p,
         marketCapUsd: d.extraInfo?.marketCap ? parseFloat(d.extraInfo.marketCap) : undefined,
-        source: "jupiter-rest",
+        source,
         receivedAt: Date.now(),
       });
     } catch {
