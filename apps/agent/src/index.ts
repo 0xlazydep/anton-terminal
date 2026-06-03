@@ -961,9 +961,8 @@ async function bootstrap(): Promise<void> {
       }
       // Update active positions from batch poll
       for (const pos of book.snapshotState().positions) {
-        if (found.has(pos.mint)) continue;
-        if (!json.data?.[pos.mint]) continue;
-        const info = json.data[pos.mint];
+        const info = json.data?.[pos.mint];
+        if (!info) continue;
         const price = parseFloat(info.price) || 0;
         if (price <= 0) continue;
         const mc = info.extraInfo?.marketCap ? parseFloat(info.extraInfo.marketCap) : undefined;
