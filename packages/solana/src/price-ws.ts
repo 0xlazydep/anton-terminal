@@ -180,11 +180,21 @@ export class HeliusPriceFeed {
     this.pendingTx.delete(id);
 
     const result = data.result as Record<string, unknown> | undefined;
-    if (!result) return;
+    if (!result) {
+      for (const sub of this.subs.values()) {
+        if (sub.mint === mint) void this.fallbackJupiter(sub);
+      }
+      return;
+    }
 
     const blockTime = result.blockTime as number | undefined;
     const price = this.priceFromParsedTx(result, mint);
-    if (price === undefined || price <= 0) return;
+    if (price === undefined || price <= 0) {
+      for (const sub of this.subs.values()) {
+        if (sub.mint === mint) void this.fallbackJupiter(sub);
+      }
+      return;
+    }
 
     const now = Date.now();
     const latencyMs = blockTime ? now - blockTime * 1000 : undefined;
