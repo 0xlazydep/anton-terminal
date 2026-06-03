@@ -1,11 +1,11 @@
 /**
- * Helius WebSocket price feed — zero-HTTP, 0ms latency.
+ * Helius WebSocket + Jupiter dual price feed — zero-throttle, minimal latency.
  *
- * Uses Helius `transactionSubscribe` to stream every swap touching the pool
- * address. Parses token balance changes directly from the notification to
- * compute price = |SOL_delta| / |token_delta| — no REST API calls.
+ * Helius `logsSubscribe` fires on every on-chain event mentioning the mint
+ * (swap, transfer, create). On notification we immediately fetch from Jupiter
+ * REST API. Jupiter polling (500ms) runs as keepalive for quiet markets.
  *
- * Jupiter REST polling (1s) runs as keepalive when no swap activity.
+ * No throttle on WS-triggered fetches. Every swap = immediate price update.
  */
 
 interface PriceCallback {
@@ -14,7 +14,6 @@ interface PriceCallback {
 
 interface ActiveSub {
   mint: string;
-  poolPubkey?: string;
   subId: number;
   callback: PriceCallback;
   lastPrice: number;
@@ -42,7 +41,7 @@ export class HeliusPriceFeed {
       this.ws.onopen = () => {
         this.connected = true;
         for (const sub of this.subs.values()) {
-          this.doTxSubscribe(sub);
+          this.doLogsSubscribe(sub);
         }
       };
 
@@ -71,7 +70,7 @@ export class HeliusPriceFeed {
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
-    }, 5000);
+    }, 2000);
   }
 
   private handleMessage(data: Record<string, unknown>): void {
@@ -84,135 +83,25 @@ export class HeliusPriceFeed {
     const sub = this.subs.get(subId);
     if (!sub) return;
 
-    const tx = this.extractTransaction(params);
-    if (!tx) return;
+    this.fetchAndUpdate(sub);
+  }
 
-    const price = this.priceFromTx(tx, sub.mint);
-    if (price === undefined || price <= 0) return;
-
-    const now = Date.now();
-    if (now - sub.lastUpdate < 80 && price === sub.lastPrice) return;
+  private async fetchAndUpdate(sub: ActiveSub): Promise<void> {
+    const { price, marketCap } = await this.fetchJupiterPrice(sub.mint);
+    if (price <= 0) return;
     sub.lastPrice = price;
-    sub.lastUpdate = now;
-    sub.callback(price);
-  }
-
-  private extractTransaction(params: Record<string, unknown>): Record<string, unknown> | undefined {
-    const result = params.result as Record<string, unknown> | undefined;
-    if (!result) return;
-
-    const tx = result.transaction ?? result;
-    return tx as Record<string, unknown> | undefined;
-  }
-
-  private priceFromTx(tx: Record<string, unknown>, mint: string): number | undefined {
-    const meta = tx.meta as Record<string, unknown> | undefined;
-    if (!meta) return;
-
-    const pre = (meta.preTokenBalances as Array<Record<string, unknown>>) ?? [];
-    const post = (meta.postTokenBalances as Array<Record<string, unknown>>) ?? [];
-
-    const SOL_MINT = "So11111111111111111111111111111111111111112";
-
-    let solDelta = 0;
-    let tokenDelta = 0;
-
-    for (const b of post) {
-      const mintAddr = b.mint as string;
-      const amt = (b.uiTokenAmount as { uiAmount: number })?.uiAmount ?? 0;
-      const preBal = pre.find(
-        (p) =>
-          (p.mint as string) === mintAddr &&
-          (p.accountIndex as number) === (b.accountIndex as number),
-      );
-      const preAmt = preBal
-        ? (preBal.uiTokenAmount as { uiAmount: number })?.uiAmount ?? 0
-        : 0;
-      const delta = amt - preAmt;
-
-      if (mintAddr === SOL_MINT) solDelta += delta;
-      else if (mintAddr === mint) tokenDelta += delta;
-    }
-
-    if (solDelta === 0 || tokenDelta === 0) return;
-    return Math.abs(solDelta / tokenDelta);
-  }
-
-  private send(message: Record<string, unknown>): void {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
-    }
-  }
-
-  private doTxSubscribe(sub: ActiveSub): void {
-    const pool = sub.poolPubkey;
-    if (!pool) return;
-    const id = this.nextId++;
-    this.send({
-      jsonrpc: "2.0",
-      id,
-      method: "transactionSubscribe",
-      params: [
-        { vote: false, failed: false, accountInclude: [pool] },
-        {
-          commitment: "processed",
-          encoding: "jsonParsed",
-          transactionDetails: "full",
-          showRewards: false,
-          maxSupportedTransactionVersion: 0,
-        },
-      ],
-    });
-  }
-
-  async subscribe(
-    mint: string,
-    callback: PriceCallback,
-    poolPubkey?: string,
-  ): Promise<number> {
-    const subId = this.nextId++;
-    const sub: ActiveSub = {
-      mint,
-      poolPubkey,
-      subId,
-      callback,
-      lastPrice: 0,
-      lastUpdate: 0,
-      pollTimer: null,
-    };
-    this.subs.set(subId, sub);
-
-    const { price, marketCap } = await this.fetchJupiterPrice(mint);
-    if (price > 0) {
-      sub.lastPrice = price;
-      callback(price, marketCap);
-    }
-
-    if (this.connected && poolPubkey) {
-      this.doTxSubscribe(sub);
-    }
-
-    sub.pollTimer = setInterval(() => {
-      if (this.subs.has(subId)) {
-        this.fetchJupiterPrice(mint).then(({ price: p, marketCap: mc }) => {
-          if (p > 0 && p !== sub.lastPrice) {
-            sub.lastPrice = p;
-            callback(p, mc);
-          }
-        }).catch(() => {});
-      } else {
-        clearInterval(sub.pollTimer!);
-      }
-    }, 1000);
-
-    return subId;
+    sub.callback(price, marketCap);
   }
 
   private async fetchJupiterPrice(mint: string): Promise<{ price: number; marketCap?: number }> {
     try {
-      const res = await fetch(`https://api.jup.ag/price/v2?ids=${mint}&showExtraInfo=true`);
+      const res = await fetch(
+        `https://api.jup.ag/price/v2?ids=${mint}&showExtraInfo=true`,
+      );
       if (!res.ok) return { price: 0 };
-      const json = (await res.json()) as { data?: Record<string, { price: string; extraInfo?: { marketCap?: string } }> };
+      const json = (await res.json()) as {
+        data?: Record<string, { price: string; extraInfo?: { marketCap?: string } }>;
+      };
       const d = json.data?.[mint];
       if (!d) return { price: 0 };
       return {
@@ -222,6 +111,54 @@ export class HeliusPriceFeed {
     } catch {
       return { price: 0 };
     }
+  }
+
+  private send(message: Record<string, unknown>): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(message));
+    }
+  }
+
+  private doLogsSubscribe(sub: ActiveSub): void {
+    const id = this.nextId++;
+    this.send({
+      jsonrpc: "2.0",
+      id,
+      method: "logsSubscribe",
+      params: [
+        { mentions: [sub.mint] },
+        { commitment: "processed" },
+      ],
+    });
+  }
+
+  async subscribe(mint: string, callback: PriceCallback, _poolPubkey?: string): Promise<number> {
+    const subId = this.nextId++;
+    const sub: ActiveSub = {
+      mint,
+      subId,
+      callback,
+      lastPrice: 0,
+      lastUpdate: 0,
+      pollTimer: null,
+    };
+    this.subs.set(subId, sub);
+
+    this.fetchAndUpdate(sub);
+
+    if (this.connected) {
+      this.doLogsSubscribe(sub);
+    }
+
+    sub.pollTimer = setInterval(() => {
+      if (this.subs.has(subId)) {
+        this.fetchAndUpdate(sub);
+      } else {
+        clearInterval(sub.pollTimer!);
+      }
+    }, 500);
+
+    return subId;
   }
 
   unsubscribe(subId: number): void {
@@ -236,7 +173,7 @@ export class HeliusPriceFeed {
       this.send({
         jsonrpc: "2.0",
         id,
-        method: "transactionUnsubscribe",
+        method: "logsUnsubscribe",
         params: [sub.subId],
       });
     }

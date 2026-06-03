@@ -519,7 +519,6 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
           r.candidate.market.priceUsd ?? 0,
           config.mode,
           r.candidate.market.marketCapUsd ?? r.candidate.market.fdvUsd,
-          r.candidate.poolPubkey,
         );
         if (opened) {
           tradesToday++;
