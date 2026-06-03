@@ -956,9 +956,8 @@ async function bootstrap(): Promise<void> {
     const found = new Set<string>();
     let jupData: Record<string, { price: string; extraInfo?: { marketCap?: string } }> | undefined;
     try {
-      // Pass 1: Pump.fun tokens via bonding curve (on-chain, real-time)
-      const pumpMints = mints.filter((m) => m.endsWith("pump"));
-      for (const mint of pumpMints) {
+      // Pass 1: All tokens via bonding curve (on-chain, real-time)
+      for (const mint of mints) {
         const row = recentScreened.get(mint);
         if (!row) continue;
         const curve = await fetchBondingCurvePrice(mint);
