@@ -1,22 +1,20 @@
 /**
- * Helius WebSocket price feed — dual pipeline, GMGN-class.
+ * Helius REST-based price feed. Reliable, no WebSocket reconnect issues.
  *
- * Pipeline A (Pump.fun bonding curve — 0ms, pure on-chain):
- *   accountSubscribe(bondingCurvePDA) → instant notification on swap
- *   → decode virtual SOL/token reserves → price = SOL_reserves / token_reserves
- *   → MC = price × token_total_supply × SOL/USD
+ * Pipeline A (Pump.fun bonding curve): Helius REST getAccountInfo every 1.5s
+ * → decode virtual SOL/token reserves from on-chain bonding curve PDA
+ * → price = SOL_reserves / token_reserves, MC = price × supply
  *
- * Pipeline B (logsSubscribe → getTransaction — fallback for graduated tokens):
- *   logsSubscribe(mint) → getTransaction(sig) over WS → parsed balances → price
+ * Pipeline B (Jupiter): REST fallback for graduated/non-Pump tokens every 1s.
  *
- * Jupiter REST only as last-resort fallback when both pipelines fail.
+ * DexScreener: backup only (3s poll from agent).
  */
 import { PublicKey } from "@solana/web3.js";
 
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const PUMP_FUN = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
-const STALE_MS = 5000;
-const FALLBACK_MS = 15_000;
+const CURVE_INTERVAL = 1500;
+const JUP_INTERVAL = 3000;
 
 interface PriceCallback {
   (priceUsd: number, marketCapUsd?: number, meta?: { source: string }): void;
@@ -24,30 +22,22 @@ interface PriceCallback {
 
 interface ActiveSub {
   mint: string;
+  pda: string;
   callback: PriceCallback;
   lastPrice: number;
-  lastWsAt: number;
+  curveTimer: ReturnType<typeof setInterval> | null;
+  jupTimer: ReturnType<typeof setInterval> | null;
   solUsdRef: number;
-  fallbackTimer: ReturnType<typeof setInterval> | null;
-  curveSubId?: number;
-  logsSubId?: number;
   supply?: number;
 }
 
 export class HeliusPriceFeed {
-  private ws: WebSocket | null = null;
   private subs = new Map<string, ActiveSub>();
-  private heliusSubMap = new Map<number, ActiveSub>();
-  private pending = new Map<number, { mint: string; sig?: string }>();
-  private nextId = 1;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly wsUrl: string;
-  private connected = false;
+  private readonly rpcUrl: string;
   private solUsd = 130;
 
   constructor(wsUrl: string) {
-    this.wsUrl = wsUrl.startsWith("wss://") ? wsUrl : wsUrl.replace("https://", "wss://");
-    this.connect();
+    this.rpcUrl = wsUrl.replace("wss://", "https://");
     void this.refreshSolUsd();
   }
 
@@ -62,227 +52,60 @@ export class HeliusPriceFeed {
     setTimeout(() => void this.refreshSolUsd(), 30_000);
   }
 
-  private connect(): void {
-    try {
-      this.ws = new WebSocket(this.wsUrl);
-
-      this.ws.onopen = () => {
-        this.connected = true;
-        process.stdout.write("[ws] connected\n");
-        for (const sub of this.subs.values()) {
-          this.subscribeCurve(sub);
-          this.subscribeLogs(sub);
-        }
-      };
-
-      this.ws.onmessage = (event: MessageEvent) => {
-        const raw = event.data as string | undefined;
-        process.stdout.write(`[ws-raw] t=${typeof raw} len=${typeof raw === "string" ? raw.length : 0} head=${typeof raw === "string" ? raw.slice(0, 30) : "?"} data=${JSON.stringify(raw)}\n`);
-        if (typeof raw !== "string" || (!raw.startsWith("{") && !raw.startsWith("["))) return;
-        try { this.route(JSON.parse(raw)); } catch {}
-      };
-
-      this.ws.onclose = () => { this.connected = false; process.stdout.write("[ws] closed\n"); this.scheduleReconnect(); };
-      this.ws.onerror = () => { process.stdout.write("[ws] error\n"); };
-    } catch { this.scheduleReconnect(); }
-  }
-
-  private scheduleReconnect(): void {
-    if (this.reconnectTimer) return;
-    this.reconnectTimer = setTimeout(() => { this.reconnectTimer = null; this.connect(); }, 2000);
-  }
-
-  private route(data: Record<string, unknown>): void {
-    const id = (data as { id?: number }).id;
-    if (id !== undefined) {
-      const hasResp = this.pending.has(id);
-      process.stdout.write(`[ws-msg] resp id=${id} pending=${hasResp} result=${JSON.stringify(data.result)?.slice(0,60)}\n`);
-      this.handleResponse(id, data);
-      return;
-    }
-
-    const params = data.params as Record<string, unknown> | undefined;
-    if (!params) return;
-    const heliusId = (params.subscription as number) ?? 0;
-    const sub = this.heliusSubMap.get(heliusId);
-    if (!sub) { process.stdout.write(`[ws-msg] unk sub ${heliusId} (have ${[...this.heliusSubMap.keys()].join(",")})\n`); return; }
-
-    const sig = this.extractSignature(params);
-    if (sig) {
-      process.stdout.write(`[ws-msg] logs sig=${sig.slice(0,12)}...\n`);
-      const rid = this.nextId++;
-      this.pending.set(rid, { mint: sub.mint, sig });
-      this.send({ jsonrpc: "2.0", id: rid, method: "getTransaction",
-        params: [sig, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }] });
-      return;
-    }
-
-    process.stdout.write(`[ws-msg] curve update for ${sub.mint.slice(0,8)}\n`);
-    this.handleAccountUpdate(params, sub);
-  }
-
-  private extractSignature(params: Record<string, unknown>): string | undefined {
-    const r = params.result as Record<string, unknown> | undefined;
-    const v = r?.value as Record<string, unknown> | undefined;
-    return v?.signature as string | undefined;
-  }
-
-  private handleAccountUpdate(params: Record<string, unknown>, sub: ActiveSub): void {
-    const r = params.result as Record<string, unknown> | undefined;
-    const v = r?.value as Record<string, unknown> | undefined;
-    const d = v?.data as string | string[] | undefined;
-    const raw = Array.isArray(d) ? d[0] : d;
-    if (!raw) { process.stdout.write(`[ws-msg] curve no data\n`); return; }
-
-    const price = this.decodeCurve(raw);
-    if (!price || price <= 0) { process.stdout.write(`[ws-msg] curve decode fail\n`); return; }
-
-    process.stdout.write(`[ws-msg] curve price=${price.toExponential(2)} SOL\n`);
-    const now = Date.now();
-    sub.lastPrice = price;
-    sub.lastWsAt = now;
-    const priceUsd = price * sub.solUsdRef;
-    const mc = sub.supply ? price * sub.solUsdRef * sub.supply : undefined;
-    sub.callback(priceUsd, mc, { source: "curve" });
-  }
-
-  private decodeCurve(base64: string): number | undefined {
+  private decodeCurve(base64: string): { price: number; supply: number } | undefined {
     try {
       const buf = Buffer.from(base64, "base64");
       if (buf.length < 48) return;
-      const virtualTokens = buf.readBigUInt64LE(8);
-      const virtualSol = buf.readBigUInt64LE(16);
-      const supply = buf.readBigUInt64LE(40);
-      const tokenDecimals = 6;
-      const solDecimals = 9;
-
-      const priceSol = Number(virtualSol) / 1e9 / (Number(virtualTokens) / 10 ** tokenDecimals);
-      if (priceSol <= 0) return;
-
-      for (const sub of this.subs.values()) {
-        if (sub.mint === (this as unknown as { _lastDecodeMint?: string })._lastDecodeMint) continue;
-      }
-      return Number(virtualSol) / 1e9 / (Number(virtualTokens) / 1e6);
-    } catch { return; }
-  }
-
-  private handleResponse(id: number, data: Record<string, unknown>): void {
-    const p = this.pending.get(id);
-    if (!p) {
-      const result = data.result as number | undefined;
-      if (result !== undefined) {
-        for (const sub of this.subs.values()) {
-          if (sub.logsSubId !== undefined && !this.heliusSubMap.has(result)) {
-            this.heliusSubMap.set(result, sub);
-          }
-          if (sub.curveSubId !== undefined && !this.heliusSubMap.has(result)) {
-            this.heliusSubMap.set(result, sub);
-          }
-        }
-      }
+      const virtualTokens = Number(buf.readBigUInt64LE(8)) / 1e6;
+      const virtualSol = Number(buf.readBigUInt64LE(16)) / 1e9;
+      const supply = Number(buf.readBigUInt64LE(40)) / 1e6;
+      if (virtualTokens <= 0) return;
+      return { price: virtualSol / virtualTokens, supply };
+    } catch {
       return;
     }
-    this.pending.delete(id);
-
-    if (p.sig) {
-      const result = data.result as Record<string, unknown> | undefined;
-      if (result) {
-        const price = this.priceFromTx(result, p.mint);
-        if (price) {
-          for (const sub of this.subs.values()) {
-            if (sub.mint !== p.mint) continue;
-            sub.lastPrice = price;
-            sub.lastWsAt = Date.now();
-            const priceUsd = price * sub.solUsdRef;
-            const mc = sub.supply ? price * sub.solUsdRef * sub.supply : undefined;
-            sub.callback(priceUsd, mc, { source: "tx" });
-          }
-        }
-      }
-    }
   }
 
-  private priceFromTx(tx: Record<string, unknown>, mint: string): number | undefined {
-    const meta = tx.meta as Record<string, unknown> | undefined;
-    if (!meta) return;
+  private async fetchCurve(sub: ActiveSub): Promise<void> {
+    try {
+      const body = JSON.stringify({
+        jsonrpc: "2.0", id: 1,
+        method: "getAccountInfo",
+        params: [sub.pda, { encoding: "base64" }],
+      });
+      const res = await fetch(this.rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      if (!res.ok) return;
+      const json = (await res.json()) as {
+        result?: { value?: { data?: [string, string] } };
+      };
+      const data = json.result?.value?.data;
+      if (!data) return;
+      const raw = Array.isArray(data) ? data[0] : data;
+      if (!raw) return;
 
-    let solDelta = 0, tokenDelta = 0;
-    const pre = (meta.preTokenBalances as Array<Record<string, unknown>>) ?? [];
-    const post = (meta.postTokenBalances as Array<Record<string, unknown>>) ?? [];
+      const curve = this.decodeCurve(raw);
+      if (!curve || curve.price <= 0) return;
 
-    for (const b of post) {
-      const bm = b.mint as string;
-      const amt = (b.uiTokenAmount as { uiAmount: number })?.uiAmount ?? 0;
-      const preB = pre.find((p) => (p.mint as string) === bm && (p.accountIndex as number) === (b.accountIndex as number));
-      const preA = preB ? (preB.uiTokenAmount as { uiAmount: number })?.uiAmount ?? 0 : 0;
-      const delta = amt - preA;
-      if (bm === SOL_MINT) solDelta += delta;
-      else if (bm === mint) tokenDelta += delta;
-    }
-
-    if (solDelta === 0) {
-      const preL = (meta.preBalances as number[]) ?? [];
-      const postL = (meta.postBalances as number[]) ?? [];
-      if (preL.length > 0) solDelta = -(postL[0]! - preL[0]!) / 1e9;
-    }
-
-    if (solDelta === 0 || tokenDelta === 0) return;
-    return Math.abs(solDelta / tokenDelta);
+      const priceUsd = curve.price * sub.solUsdRef;
+      sub.lastPrice = curve.price;
+      if (curve.supply > 0 && !sub.supply) sub.supply = curve.supply;
+      const mc = sub.supply ? curve.price * sub.solUsdRef * sub.supply : undefined;
+      process.stdout.write(`[curve] ${sub.mint.slice(0,8)} $${priceUsd?.toExponential(3)} mc=${mc ? (mc/1000).toFixed(1)+"K" : "?"}\n`);
+      sub.callback(priceUsd, mc, { source: "curve" });
+    } catch {}
   }
 
-  private send(msg: Record<string, unknown>): void {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
-  }
-
-  private subscribeCurve(sub: ActiveSub): void {
-    const [pda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("bonding-curve"), new PublicKey(sub.mint).toBuffer()],
-      PUMP_FUN,
-    );
-    const id = this.nextId++;
-    sub.curveSubId = id;
-    this.send({
-      jsonrpc: "2.0", id, method: "accountSubscribe",
-      params: [pda.toBase58(), { encoding: "base64", commitment: "processed" }],
-    });
-  }
-
-  private subscribeLogs(sub: ActiveSub): void {
-    const id = this.nextId++;
-    sub.logsSubId = id;
-    this.send({
-      jsonrpc: "2.0", id, method: "logsSubscribe",
-      params: [{ mentions: [sub.mint] }, { commitment: "processed" }],
-    });
-  }
-
-  async subscribe(mint: string, callback: PriceCallback): Promise<number> {
-    const sub: ActiveSub = {
-      mint, callback, lastPrice: 0, lastWsAt: 0,
-      solUsdRef: this.solUsd, fallbackTimer: null,
-    };
-    this.subs.set(mint, sub);
-
-    void this.fallbackJupiter(sub);
-
-    if (this.connected) {
-      this.subscribeCurve(sub);
-      this.subscribeLogs(sub);
-    }
-
-    sub.fallbackTimer = setInterval(() => {
-      if (!this.subs.has(mint)) { clearInterval(sub.fallbackTimer!); return; }
-      if (Date.now() - sub.lastWsAt > FALLBACK_MS) void this.fallbackJupiter(sub);
-    }, 5000);
-
-    return 0;
-  }
-
-  private async fallbackJupiter(sub: ActiveSub): Promise<void> {
+  private async fetchJup(sub: ActiveSub): Promise<void> {
     try {
       const res = await fetch(`https://api.jup.ag/price/v2?ids=${sub.mint}&showExtraInfo=true`);
       if (!res.ok) return;
-      const json = (await res.json()) as { data?: Record<string, { price: string; extraInfo?: { marketCap?: string } }> };
+      const json = (await res.json()) as {
+        data?: Record<string, { price: string; extraInfo?: { marketCap?: string } }>;
+      };
       const d = json.data?.[sub.mint];
       if (!d) return;
       const p = parseFloat(d.price) || 0;
@@ -292,19 +115,48 @@ export class HeliusPriceFeed {
     } catch {}
   }
 
+  async subscribe(mint: string, callback: PriceCallback): Promise<number> {
+    const [pda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("bonding-curve"), new PublicKey(mint).toBuffer()],
+      PUMP_FUN,
+    );
+    const sub: ActiveSub = {
+      mint, pda: pda.toBase58(), callback, lastPrice: 0,
+      curveTimer: null, jupTimer: null, solUsdRef: this.solUsd,
+    };
+    this.subs.set(mint, sub);
+
+    void this.fetchCurve(sub);
+    void this.fetchJup(sub);
+
+    sub.curveTimer = setInterval(() => {
+      if (!this.subs.has(mint)) { clearInterval(sub.curveTimer!); return; }
+      void this.fetchCurve(sub);
+    }, CURVE_INTERVAL);
+
+    sub.jupTimer = setInterval(() => {
+      if (!this.subs.has(mint)) { clearInterval(sub.jupTimer!); return; }
+      void this.fetchJup(sub);
+    }, JUP_INTERVAL);
+
+    return 0;
+  }
+
   unsubscribe(mint: string): void {
     const sub = this.subs.get(mint);
     if (!sub) return;
     this.subs.delete(mint);
-    if (sub.fallbackTimer) clearInterval(sub.fallbackTimer);
+    if (sub.curveTimer) clearInterval(sub.curveTimer);
+    if (sub.jupTimer) clearInterval(sub.jupTimer);
   }
 
-  get isConnected(): boolean { return this.connected; }
+  get isConnected(): boolean { return true; }
 
   close(): void {
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    for (const sub of this.subs.values()) { if (sub.fallbackTimer) clearInterval(sub.fallbackTimer); }
-    this.subs.clear(); this.heliusSubMap.clear(); this.pending.clear();
-    this.ws?.close(); this.ws = null; this.connected = false;
+    for (const sub of this.subs.values()) {
+      if (sub.curveTimer) clearInterval(sub.curveTimer);
+      if (sub.jupTimer) clearInterval(sub.jupTimer);
+    }
+    this.subs.clear();
   }
 }
