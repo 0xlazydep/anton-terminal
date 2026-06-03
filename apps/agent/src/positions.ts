@@ -349,6 +349,7 @@ export class PositionBook {
   }
 
   private async refresh(pos: OpenPosition): Promise<void> {
+    if (pos.lastWsPrice > 0 && Date.now() - pos.lastWsPrice < 10_000) return;
     try {
       const snap = await fetchTokenMarket(pos.mint);
       if (snap.marketCapUsd && snap.marketCapUsd > 0) {
