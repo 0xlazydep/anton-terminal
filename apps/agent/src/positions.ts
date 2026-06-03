@@ -429,7 +429,7 @@ export class PositionBook {
   private logSource(pos: OpenPosition, source?: string): void {
     const src = source ?? "unknown";
     pos.updateCount++;
-    if (src !== pos.lastSource || pos.updateCount % 10 === 1) {
+    if (src !== pos.lastSource || pos.updateCount <= 3 || pos.updateCount % 10 === 1) {
       pos.lastSource = src;
       process.stderr.write(
         `[price] ${pos.symbol ?? pos.mint.slice(0, 8)} @$${pos.currentPriceUsd.toFixed(8)} source=${src} #${pos.updateCount}\n`,
@@ -468,6 +468,11 @@ export class PositionBook {
   updateFromPoll(id: string, priceUsd: number, marketCapUsd?: number): void {
     const pos = this.positions.get(id);
     if (!pos) return;
+
+    // Don't overwrite with slower Jupiter data if WS just updated
+    const wsAge = Date.now() - pos.lastWsPrice;
+    if (pos.lastSource === "ws-bonding-curve" && wsAge < 500) return;
+
     if (priceUsd > 0) {
       pos.currentPriceUsd = priceUsd;
       if (priceUsd > pos.peakPriceUsd) pos.peakPriceUsd = priceUsd;
