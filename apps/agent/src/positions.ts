@@ -344,7 +344,6 @@ export class PositionBook {
   }
 
   private async refresh(pos: OpenPosition): Promise<void> {
-    if (pos.lastWsPrice > 0 && Date.now() - pos.lastWsPrice < 5000) return;
     let priceUsd: number | undefined;
     let marketCapUsd: number | undefined;
     try {

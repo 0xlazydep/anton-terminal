@@ -182,10 +182,10 @@ export class HeliusPriceFeed {
     };
     this.subs.set(subId, sub);
 
-    const price = await this.fetchJupiterPrice(mint);
+    const { price, marketCap } = await this.fetchJupiterPrice(mint);
     if (price > 0) {
       sub.lastPrice = price;
-      callback(price);
+      callback(price, marketCap);
     }
 
     if (this.connected && poolPubkey) {
@@ -194,10 +194,10 @@ export class HeliusPriceFeed {
 
     sub.pollTimer = setInterval(() => {
       if (this.subs.has(subId)) {
-        this.fetchJupiterPrice(mint).then((p) => {
+        this.fetchJupiterPrice(mint).then(({ price: p, marketCap: mc }) => {
           if (p > 0 && p !== sub.lastPrice) {
             sub.lastPrice = p;
-            callback(p);
+            callback(p, mc);
           }
         }).catch(() => {});
       } else {
@@ -208,14 +208,19 @@ export class HeliusPriceFeed {
     return subId;
   }
 
-  private async fetchJupiterPrice(mint: string): Promise<number> {
+  private async fetchJupiterPrice(mint: string): Promise<{ price: number; marketCap?: number }> {
     try {
-      const res = await fetch(`https://api.jup.ag/price/v2?ids=${mint}`);
-      if (!res.ok) return 0;
-      const json = (await res.json()) as { data?: Record<string, { price: string }> };
-      return parseFloat(json.data?.[mint]?.price ?? "0") || 0;
+      const res = await fetch(`https://api.jup.ag/price/v2?ids=${mint}&showExtraInfo=true`);
+      if (!res.ok) return { price: 0 };
+      const json = (await res.json()) as { data?: Record<string, { price: string; extraInfo?: { marketCap?: string } }> };
+      const d = json.data?.[mint];
+      if (!d) return { price: 0 };
+      return {
+        price: parseFloat(d.price) || 0,
+        marketCap: d.extraInfo?.marketCap ? parseFloat(d.extraInfo.marketCap) : undefined,
+      };
     } catch {
-      return 0;
+      return { price: 0 };
     }
   }
 
