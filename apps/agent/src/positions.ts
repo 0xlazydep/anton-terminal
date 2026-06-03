@@ -56,6 +56,7 @@ interface OpenPosition {
   trailingActivated: boolean;
   actualEntrySol?: number;
   lastWsPrice: number;
+  lastSource: string;
 }
 
 export interface PositionBookLimits {
@@ -128,13 +129,14 @@ export class PositionBook {
         peakPriceUsd: r.entryPriceUsd,
         trailingActivated: false,
         lastWsPrice: 0,
+        lastSource: "",
       });
       if (this.priceFeed && !this.wsSubMints.has(r.mint)) {
         this.wsSubMints.add(r.mint);
         const mint = r.mint;
         const entryMc = r.entryMarketCapUsd;
         const entryPx = r.entryPriceUsd;
-        await this.priceFeed.subscribe(mint, (priceUsd, marketCapUsd) => {
+        await this.priceFeed.subscribe(mint, (priceUsd, marketCapUsd, meta) => {
           const p = this.positions.get(id);
           if (!p) return;
           if (priceUsd > 0) {
@@ -144,6 +146,7 @@ export class PositionBook {
             else if (marketCapUsd && marketCapUsd > 0) p.currentMarketCapUsd = marketCapUsd;
           }
           p.lastWsPrice = Date.now();
+          this.logSource(p, meta?.source);
           this.checkExitConditions(p, this.pnlPct(p));
         });
       }
@@ -262,6 +265,7 @@ export class PositionBook {
       trailingActivated: false,
       actualEntrySol,
       lastWsPrice: 0,
+      lastSource: "",
     };
     this.positions.set(id, pos);
 
@@ -311,6 +315,7 @@ export class PositionBook {
           }
         }
         p.lastWsPrice = Date.now();
+        this.logSource(p, meta?.source);
         const pnl = this.pnlPct(p);
         this.checkExitConditions(p, pnl);
       });
@@ -416,6 +421,15 @@ export class PositionBook {
       return ((pos.currentPriceUsd - pos.entryPriceUsd) / pos.entryPriceUsd) * 100;
     }
     return 0;
+  }
+
+  private logSource(pos: OpenPosition, source?: string): void {
+    const src = source ?? "unknown";
+    if (src === pos.lastSource) return;
+    pos.lastSource = src;
+    process.stderr.write(
+      `[price] ${pos.symbol ?? pos.mint.slice(0, 8)} source=${src}\n`,
+    );
   }
 
   private async close(pos: OpenPosition, pnlPct: number, reason: string): Promise<void> {
