@@ -111,7 +111,8 @@ export class PositionBook {
     this.history.length = 0;
     const open = await listOpenPositions(this.db, mode);
     for (const r of open) {
-      this.positions.set(r.id, {
+      const id = r.id;
+      this.positions.set(id, {
         id: r.id,
         mint: r.mint,
         symbol: r.symbol,
@@ -128,6 +129,24 @@ export class PositionBook {
         trailingActivated: false,
         lastWsPrice: 0,
       });
+      if (this.priceFeed && !this.wsSubMints.has(r.mint)) {
+        this.wsSubMints.add(r.mint);
+        const mint = r.mint;
+        const entryMc = r.entryMarketCapUsd;
+        const entryPx = r.entryPriceUsd;
+        await this.priceFeed.subscribe(mint, (priceUsd, marketCapUsd) => {
+          const p = this.positions.get(id);
+          if (!p) return;
+          if (priceUsd > 0) {
+            p.currentPriceUsd = priceUsd;
+            if (priceUsd > p.peakPriceUsd) p.peakPriceUsd = priceUsd;
+            if (entryMc && entryPx > 0) p.currentMarketCapUsd = priceUsd * (entryMc / entryPx);
+            else if (marketCapUsd && marketCapUsd > 0) p.currentMarketCapUsd = marketCapUsd;
+          }
+          p.lastWsPrice = Date.now();
+          this.checkExitConditions(p, this.pnlPct(p));
+        });
+      }
     }
     const closed = await listClosedPositions(this.db, 100, mode);
     for (const r of closed) {
