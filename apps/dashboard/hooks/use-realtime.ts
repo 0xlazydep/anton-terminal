@@ -227,10 +227,9 @@ export function useRealtime(): void {
     const onScreening = (evt: ScreeningResultEvent) => {
       qc.setQueryData<ScreeningResultEvent[]>(["screening"], (prev) => {
         const existing = (prev ?? []).find((r) => r.mint === evt.mint);
-        if (existing && evt.llmAction) {
-          // Merge LLM decision into existing screening row
+        if (existing) {
           return (prev ?? []).map((r) =>
-            r.mint === evt.mint ? { ...r, llmAction: evt.llmAction } : r,
+            r.mint === evt.mint ? { ...r, ...evt } : r,
           );
         }
         const withoutMint = (prev ?? []).filter((r) => r.mint !== evt.mint);
