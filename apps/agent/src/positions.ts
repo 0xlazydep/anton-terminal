@@ -441,6 +441,20 @@ export class PositionBook {
    * need to reconcile the PositionBook with reality.
    */
   async forceClose(id: string, pnlPct: number, reason: string): Promise<boolean> {
+
+  updateFromPoll(id: string, priceUsd: number, marketCapUsd?: number): void {
+    const pos = this.positions.get(id);
+    if (!pos) return;
+    if (priceUsd > 0) {
+      pos.currentPriceUsd = priceUsd;
+      if (priceUsd > pos.peakPriceUsd) pos.peakPriceUsd = priceUsd;
+      if (marketCapUsd && marketCapUsd > 0) pos.currentMarketCapUsd = marketCapUsd;
+      else if (pos.entryMarketCapUsd && pos.entryPriceUsd > 0) pos.currentMarketCapUsd = priceUsd * (pos.entryMarketCapUsd / pos.entryPriceUsd);
+    }
+    pos.lastWsPrice = Date.now();
+    const pnl = this.pnlPct(pos);
+    this.checkExitConditions(pos, pnl);
+  }
     const pos = this.positions.get(id);
     if (!pos) return false;
     this.finalizeClose(pos, pnlPct, reason);
