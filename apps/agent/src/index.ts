@@ -740,23 +740,28 @@ async function bootstrap(): Promise<void> {
         const finalWsUrl = wsUrl.startsWith("wss://") ? wsUrl : wsUrl.replace("https://", "wss://");
         const wsConnection = createWsConnection(rpcUrl, finalWsUrl, "processed");
 
-        // Fetch live SOL/USD for bonding-curve MC calc (replaces hardcoded $130)
-        let solUsd = 130;
-        try {
-          const solRes = await fetch(
-            "https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112",
-          );
-          if (solRes.ok) {
-            const solJson = (await solRes.json()) as { data?: Record<string, { price: string }> };
-            const solPrice = solJson.data?.["So11111111111111111111111111111111111111112"]?.price;
-            if (solPrice) solUsd = parseFloat(solPrice);
-          }
-        } catch {
-          // Keep fallback
-        }
-
         const gmgnKey = env.GMGN_API_KEY?.trim() || undefined;
         priceFeed.setConnection(wsConnection, gmgnKey);
+
+        // Confirm live SOL/USD for the startup log (feed refreshes it internally every 30s)
+        let solUsd = 130;
+        const SOL = "So11111111111111111111111111111111111111112";
+        if (gmgnKey) {
+          const { GmgnClient } = await import("@anton/solana");
+          const g = await new GmgnClient(gmgnKey).fetchTokenInfo(SOL);
+          if (g && g.priceUsd > 0) solUsd = g.priceUsd;
+        }
+        if (solUsd === 130) {
+          try {
+            const solRes = await fetch(`https://api.jup.ag/price/v2?ids=${SOL}`);
+            if (solRes.ok) {
+              const solJson = (await solRes.json()) as { data?: Record<string, { price: string }> };
+              const p = parseFloat(solJson.data?.[SOL]?.price ?? "");
+              if (p > 0) solUsd = p;
+            }
+          } catch { /* keep fallback */ }
+        }
+
         const pollSrc = gmgnKey ? "GMGN API (matches UI exactly)" : "Jupiter";
         log(`price feed: Helius WS (bonding-curve <100ms) + ${pollSrc} 1s poll`);
         log(`price feed: SOL/USD $${solUsd.toFixed(2)}`);
