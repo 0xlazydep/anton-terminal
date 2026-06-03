@@ -278,6 +278,7 @@ export class PositionBook {
     // Subscribe to real-time price via Helius WebSocket
     if (this.priceFeed && !this.wsSubMints.has(pos.mint)) {
       this.wsSubMints.add(pos.mint);
+      process.stderr.write(`[ws] subscribing ${pos.symbol ?? pos.mint.slice(0,8)}...\n`);
       const subId = await this.priceFeed.subscribe(pos.mint, (priceUsd, marketCapUsd) => {
         const p = this.positions.get(id);
         if (!p) return;
