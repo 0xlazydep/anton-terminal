@@ -997,6 +997,10 @@ async function bootstrap(): Promise<void> {
       }
 
       // Pass 3: DexScreener for anything still missed
+      const missed = mints.filter((m) => !found.has(m));
+      for (const mint of missed) {
+        const row = recentScreened.get(mint);
+        if (!row) continue;
         try {
           const { fetchTokenMarket } = await import("@anton/ingestion");
           const snap = await fetchTokenMarket(mint);
@@ -1010,16 +1014,11 @@ async function bootstrap(): Promise<void> {
           }
         } catch {}
       }
-      // Update active positions from batch poll
-      // Update active positions from batch poll
+
       for (const pos of book.snapshotState().positions) {
-        const info = json.data?.[pos.mint];
-        if (info) {
-          const price = parseFloat(info.price) || 0;
-          if (price > 0) {
-            const mc = info.extraInfo?.marketCap ? parseFloat(info.extraInfo.marketCap) : undefined;
-            book.updateFromPoll(pos.id, price, mc);
-          }
+        const curve = await fetchBondingCurvePrice(pos.mint);
+        if (curve && curve.priceUsd > 0) {
+          book.updateFromPoll(pos.id, curve.priceUsd, curve.mcUsd);
         }
       }
     } catch {}
