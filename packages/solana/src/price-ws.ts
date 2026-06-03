@@ -48,7 +48,7 @@ export class HeliusPriceFeed {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly wsUrl: string;
   private connected = false;
-  private solUsd = 0;
+  private solUsd = 130;
   private lastLatencyWarn = 0;
 
   constructor(wsUrl: string) {
@@ -60,7 +60,7 @@ export class HeliusPriceFeed {
 
   private async refreshSolUsd(): Promise<void> {
     try {
-      const res = await fetch(`https://api.jup.ag/price/v2?ids=${SOL_MINT}`);
+      const res = await fetch(`https://quote-api.jup.ag/v6/price?ids=${SOL_MINT}`);
       if (!res.ok) return;
       const json = (await res.json()) as { data?: Record<string, { price: string }> };
       const p = parseFloat(json.data?.[SOL_MINT]?.price ?? "0");
@@ -68,7 +68,11 @@ export class HeliusPriceFeed {
         this.solUsd = p;
         for (const sub of this.subs.values()) sub.solUsdRef = p;
       }
-    } catch {}
+    } catch (err: unknown) {
+      if (String(err).includes("429")) {
+        process.stderr.write("[price-ws] SOL/USD 429 rate-limited\n");
+      }
+    }
   }
 
   private connect(): void {
@@ -285,7 +289,7 @@ export class HeliusPriceFeed {
 
   private async fallbackJupiter(sub: ActiveSub): Promise<void> {
     try {
-      const res = await fetch(`https://api.jup.ag/price/v2?ids=${sub.mint}&showExtraInfo=true`);
+      const res = await fetch(`https://quote-api.jup.ag/v6/price?ids=${sub.mint}&showExtraInfo=true`);
       if (!res.ok) return;
       const json = (await res.json()) as {
         data?: Record<string, { price: string; extraInfo?: { marketCap?: string } }>;
