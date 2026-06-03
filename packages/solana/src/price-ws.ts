@@ -110,7 +110,7 @@ class BirdeyeWs {
       }));
     });
 
-    this.ws.on("message", (raw) => {
+    this.ws.on("message", (raw: WebSocket.RawData) => {
       try {
         const msg = JSON.parse(raw.toString()) as {
           type: string;
