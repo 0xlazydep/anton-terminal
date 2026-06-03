@@ -55,13 +55,20 @@ export class HeliusPriceFeed {
   private decodeCurve(base64: string): { price: number; supply: number } | undefined {
     try {
       const buf = Buffer.from(base64, "base64");
-      if (buf.length < 48) return;
-      const virtualTokens = Number(buf.readBigUInt64LE(8)) / 1e6;
-      const virtualSol = Number(buf.readBigUInt64LE(16)) / 1e9;
-      const supply = Number(buf.readBigUInt64LE(40)) / 1e6;
-      if (virtualTokens <= 0) return;
+      process.stderr.write(`[curve-debug] len=${buf.length} bytes\n`);
+      if (buf.length < 40) { process.stderr.write(`[curve-debug] too short\n`); return; }
+      const vTokRaw = buf.readBigUInt64LE(8);
+      const vSolRaw = buf.readBigUInt64LE(16);
+      const supplyRaw = buf.readBigUInt64LE(40);
+      process.stderr.write(`[curve-debug] vt=${vTokRaw} vs=${vSolRaw} sup=${supplyRaw}\n`);
+      const virtualTokens = Number(vTokRaw) / 1e6;
+      const virtualSol = Number(vSolRaw) / 1e9;
+      const supply = Number(supplyRaw) / 1e6;
+      process.stderr.write(`[curve-debug] vtF=${virtualTokens} vsF=${virtualSol}\n`);
+      if (virtualTokens <= 0) { process.stderr.write(`[curve-debug] vt<=0\n`); return; }
       return { price: virtualSol / virtualTokens, supply };
-    } catch {
+    } catch(err) {
+      process.stderr.write(`[curve-debug] exception: ${String(err)}\n`);
       return;
     }
   }
