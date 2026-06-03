@@ -116,16 +116,24 @@ export class HeliusPriceFeed {
   }
 
   async subscribe(mint: string, callback: PriceCallback): Promise<number> {
-    const [pda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("bonding-curve"), new PublicKey(mint).toBuffer()],
-      PUMP_FUN,
-    );
+    let pda = "";
+    try {
+      const [pk] = PublicKey.findProgramAddressSync(
+        [Buffer.from("bonding-curve"), new PublicKey(mint).toBuffer()],
+        PUMP_FUN,
+      );
+      pda = pk.toBase58();
+    } catch(err) {
+      process.stdout.write(`[curve] PDA fail for ${mint.slice(0,8)}: ${String(err).slice(0,40)}\n`);
+      return 0;
+    }
     const sub: ActiveSub = {
-      mint, pda: pda.toBase58(), callback, lastPrice: 0,
+      mint, pda, callback, lastPrice: 0,
       curveTimer: null, jupTimer: null, solUsdRef: this.solUsd,
     };
     this.subs.set(mint, sub);
 
+    process.stdout.write(`[curve] sub ${mint.slice(0,8)} pda=${pda.slice(0,16)}... rpc=${this.rpcUrl.slice(0,40)}...\n`);
     void this.fetchCurve(sub);
     void this.fetchJup(sub);
 
