@@ -557,11 +557,14 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
         reason(bus, `⛔ Negative expected value ${decision.expected_value_sol.toFixed(4)} SOL — expected cost ${(decision.expected_cost_sol ?? 0).toFixed(4)} exceeds edge · skipping ${decision.symbol ?? ""}`, 0.8);
       } else {
         status(bus, "entering");
+        let entryMc = r.candidate.market.marketCapUsd ?? r.candidate.market.fdvUsd;
+        const curve = await fetchBondingCurvePrice(decision.token);
+        if (curve?.mcUsd && curve.mcUsd > 0) entryMc = curve.mcUsd;
         const opened = await book.open(
           decision,
           r.candidate.market.priceUsd ?? 0,
           config.mode,
-          r.candidate.market.marketCapUsd ?? r.candidate.market.fdvUsd,
+          entryMc,
         );
         if (opened) {
           tradesToday++;
