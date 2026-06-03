@@ -286,10 +286,9 @@ export class PositionBook {
           if (priceUsd > p.peakPriceUsd) p.peakPriceUsd = priceUsd;
           if (p.entryMarketCapUsd && p.entryPriceUsd > 0) {
             p.currentMarketCapUsd = priceUsd * (p.entryMarketCapUsd / p.entryPriceUsd);
-          } else if (marketCapUsd && marketCapUsd > 0) {
+          } else           if (marketCapUsd && marketCapUsd > 0) {
             p.currentMarketCapUsd = marketCapUsd;
           }
-          process.stderr.write(`[pos] ${p.symbol ?? p.mint.slice(0,6)} price=${priceUsd.toExponential(2)} mc=${((p.currentMarketCapUsd ?? 0)/1000).toFixed(1)}K src=${"?"}\n`);
         }
         p.lastWsPrice = Date.now();
         const pnl = this.pnlPct(p);

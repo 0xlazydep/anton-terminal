@@ -44,6 +44,8 @@ export class HeliusPriceFeed {
   private subs = new Map<number, ActiveSub>();
   private pendingTx = new Map<number, string>();
   private pendingSupply = new Map<number, string>();
+  private pendingLogsSub = new Map<number, ActiveSub>();
+  private heliusSubMap = new Map<number, ActiveSub>();
   private nextId = 1;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly wsUrl: string;
@@ -120,13 +122,14 @@ export class HeliusPriceFeed {
     if (id !== undefined) {
       if (this.pendingTx.has(id)) this.handleTxResponse(id, data);
       else if (this.pendingSupply.has(id)) this.handleSupplyResponse(id, data);
+      else if (this.pendingLogsSub.has(id)) this.handleLogsSubResponse(id, data);
       return;
     }
 
     const params = data.params as Record<string, unknown> | undefined;
     if (!params) return;
-    const subId = (params.subscription as number) ?? 0;
-    const sub = this.subs.get(subId);
+    const heliusSubId = (params.subscription as number) ?? 0;
+    const sub = this.heliusSubMap.get(heliusSubId);
     if (!sub) return;
 
     const sig = this.extractSignature(params);
@@ -256,12 +259,22 @@ export class HeliusPriceFeed {
 
   private doLogsSubscribe(sub: ActiveSub): void {
     const id = this.nextId++;
+    this.pendingLogsSub.set(id, sub);
     this.send({
       jsonrpc: "2.0",
       id,
       method: "logsSubscribe",
       params: [{ mentions: [sub.mint] }, { commitment: "processed" }],
     });
+  }
+
+  private handleLogsSubResponse(id: number, data: Record<string, unknown>): void {
+    const sub = this.pendingLogsSub.get(id);
+    if (!sub) return;
+    this.pendingLogsSub.delete(id);
+    const heliusSubId = data.result as number;
+    if (!heliusSubId) return;
+    this.heliusSubMap.set(heliusSubId, sub);
   }
 
   async subscribe(mint: string, callback: PriceCallback, _poolPubkey?: string): Promise<number> {
@@ -322,10 +335,13 @@ export class HeliusPriceFeed {
     if (!sub) return;
     this.subs.delete(subId);
     if (sub.fallbackTimer) clearInterval(sub.fallbackTimer);
+    for (const [k, v] of this.heliusSubMap) { if (v === sub) { this.heliusSubMap.delete(k); break; } }
 
     if (this.connected) {
       const id = this.nextId++;
-      this.send({ jsonrpc: "2.0", id, method: "logsUnsubscribe", params: [sub.subId] });
+      for (const [k, v] of this.heliusSubMap) {
+        if (v === sub) { this.heliusSubMap.delete(k); this.send({ jsonrpc: "2.0", id, method: "logsUnsubscribe", params: [k] }); break; }
+      }
     }
   }
 
@@ -344,6 +360,8 @@ export class HeliusPriceFeed {
     this.subs.clear();
     this.pendingTx.clear();
     this.pendingSupply.clear();
+    this.pendingLogsSub.clear();
+    this.heliusSubMap.clear();
     this.ws?.close();
     this.ws = null;
     this.connected = false;
