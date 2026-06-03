@@ -19,7 +19,8 @@
     "@anton/ingestion": "workspace:*",
     "@anton/screening": "workspace:*",
     "@anton/solana": "workspace:*",
-    "@anton/agent": "workspace:*"
+    "@anton/agent": "workspace:*",
+    "@solana/web3.js": "^1.95.0"
   },
   "devDependencies": {
     "rimraf": "^6.0.1",
