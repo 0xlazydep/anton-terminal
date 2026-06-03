@@ -42,7 +42,6 @@ import { getTokenBalance } from "@anton/solana";
 import { SOL_MINT } from "@anton/solana";
 import { HeliusPriceFeed } from "@anton/solana";
 import { WalletIntel } from "@anton/solana";
-import { PublicKey } from "@solana/web3.js";
 import type {
   AgentState,
   BalancePointSnapshot,
@@ -111,13 +110,13 @@ const recentScreened = new Map<string, { symbol?: string; score: number; verdict
 let db: Database | undefined;
 let walletIntel: WalletIntel | undefined;
 
-const PUMP_FUN_PROGRAM = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
-
 async function fetchBondingCurvePrice(mint: string): Promise<{ priceUsd: number; mcUsd?: number } | undefined> {
   try {
+    const { PublicKey } = await import("@solana/web3.js");
+    const PUMP = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
     const [pda] = PublicKey.findProgramAddressSync(
       [Buffer.from("bonding-curve"), new PublicKey(mint).toBuffer()],
-      PUMP_FUN_PROGRAM,
+      PUMP,
     );
     const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY ?? ""}`, {
       method: "POST", headers: { "Content-Type": "application/json" },
