@@ -122,6 +122,7 @@ export interface ScreeningResultEvent {
   verdict: ScreeningVerdict;
   flags: string[];
   liquidityUsd?: number;
+  marketCapUsd?: number;
   pairAgeSec?: number;
   ts: number;
   source?: TokenSource;

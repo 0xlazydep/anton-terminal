@@ -105,6 +105,7 @@ export function Screening() {
               <TH className="text-right">SCORE</TH>
               <TH className="w-[120px]">RISK</TH>
               <TH className="text-right">LIQ</TH>
+              <TH className="text-right">MC</TH>
               <TH className="text-right">AGE</TH>
               <TH>FLAGS</TH>
               <TH className="text-right">VERDICT</TH>
@@ -132,6 +133,11 @@ export function Screening() {
                 <TD className="text-right tabular-nums">
                   {r.liquidityUsd != null
                     ? `$${(r.liquidityUsd / 1000).toFixed(1)}K`
+                    : "—"}
+                </TD>
+                <TD className="text-right tabular-nums">
+                  {r.marketCapUsd != null
+                    ? `$${(r.marketCapUsd / 1000).toFixed(1)}K`
                     : "—"}
                 </TD>
                 <TD className="text-right tabular-nums">
@@ -165,7 +171,7 @@ export function Screening() {
             {rows.length === 0 && (
               <TR>
                 <TD
-                  colSpan={10}
+                  colSpan={11}
                   className="py-6 text-center text-[var(--muted-foreground)] uppercase tracking-[0.16em] text-[10px]"
                 >
                   AWAITING CANDIDATES

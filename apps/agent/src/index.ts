@@ -231,6 +231,7 @@ async function runCycle(bus: EventBus, book: PositionBook, deepseek?: DeepSeekCl
         verdict: report.verdict,
         flags: report.flags,
         liquidityUsd: report.liquidityUsd ?? candidate.market.liquidityUsd,
+        marketCapUsd: candidate.market.marketCapUsd ?? candidate.market.fdvUsd,
         pairAgeSec: report.pairAgeSec ?? candidate.market.pairAgeSec,
         ts: report.ts,
         source: candidate.source,
