@@ -1,33 +1,31 @@
 /**
- * Real-time price feed with three layers:
- *   1. Helius WebSocket `accountSubscribe` on pump.fun bonding-curve PDA
- *      → sub-100ms price updates (every buy/sell triggers a push)
- *   2. Jupiter REST API at 500ms → fallback for graduated / non-pump tokens
- *   3. DexScreener → MC-only backup (handled by the screening poll timer)
+ * Real-time price feed — three independent sources, first to fire wins:
  *
- * Pump.fun bonding-curve PDA layout (same as fetchBondingCurvePrice in agent):
- *   offset  8 → virtualTokenReserves (u64 LE)
- *   offset 16 → virtualSolReserves   (u64 LE)
- *   offset 40 → realTokenReserves    (u64 LE) — total supply, for MC
+ *   1. Birdeye WebSocket (wss://ws.birdeye.so)
+ *      → Pushes prices for ALL Solana tokens at validator propagation speed.
+ *      → Single shared connection, multiplexes all subscriptions.
  *
- * Price in SOL = virtualSolReserves / virtualTokenReserves.
- * Market cap   = priceSol * solUsdPrice * (realTokenReserves / 1e6).
+ *   2. Helius WebSocket `accountSubscribe` on pump.fun bonding-curve PDA
+ *      → Sub-100ms for pump.fun tokens specifically.
+ *
+ *   3. Jupiter REST at 200ms
+ *      → Fallback when both WebSockets miss a token.
  */
 
 import { Connection, PublicKey } from "@solana/web3.js";
-import type { Context, AccountInfo } from "@solana/web3.js";
+import WebSocket from "ws";
 
 const PUMP_PROGRAM = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
-const JUPITER_FALLBACK_MS = 500;
+const BIRDEYE_WS = "wss://ws.birdeye.so";
+const JUPITER_URL = "https://api.jup.ag/price/v2";
+const JUPITER_MS = 200;
 const SOL_USD_FALLBACK = 130;
-const ACCOUNT_DATA_MIN_LEN = 48;
+const BONDING_CURVE_SEED = Buffer.from("bonding-curve");
 
 export interface PriceUpdate {
   priceUsd: number;
   marketCapUsd?: number;
-  /** "ws-bonding-curve" | "jupiter-rest" | "dexscreener" */
-  source: "ws-bonding-curve" | "jupiter-rest" | "dexscreener";
-  /** ms since last update (approximate latency from chain to callback) */
+  source: "birdeye-ws" | "ws-bonding-curve" | "jupiter-rest";
   latencyMs?: number;
 }
 
@@ -38,96 +36,215 @@ interface SubEntry {
   callback: PriceCallback;
   wsSubId: number | null;
   jupiterTimer: ReturnType<typeof setInterval> | null;
-  lastUpdateTs: number;
+  pda: PublicKey | null;
+  solUsd: number;
+}
+
+/**
+ * Birdeye WebSocket — single shared connection, multiplexed subscriptions.
+ * Birdeye aggregates DEX data at validator speed and pushes sub-50ms price
+ * updates for EVERY Solana token. This is how GMGN/Axiom get their speed.
+ */
+class BirdeyeWs {
+  private ws: WebSocket | null = null;
+  private apiKey: string;
+  private callbacks = new Map<string, Set<PriceCallback>>();
+  private pending: Array<() => void> = [];
+  private connected = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(apiKey: string) {
+    this.apiKey = apiKey;
+    this.connect();
+  }
+
+  subscribe(mint: string, cb: PriceCallback): void {
+    let set = this.callbacks.get(mint);
+    if (!set) {
+      set = new Set();
+      this.callbacks.set(mint, set);
+    }
+    set.add(cb);
+
+    if (this.connected) {
+      this.sendSubscribe(mint);
+    } else {
+      this.pending.push(() => this.sendSubscribe(mint));
+    }
+  }
+
+  unsubscribe(mint: string, cb?: PriceCallback): void {
+    const set = this.callbacks.get(mint);
+    if (!set) return;
+    if (cb) {
+      set.delete(cb);
+      if (set.size > 0) return;
+    }
+    this.callbacks.delete(mint);
+    if (this.connected) {
+      this.ws?.send(JSON.stringify({
+        type: "UNSUBSCRIBE_PRICE",
+        data: { queryType: "simple", address: mint },
+      }));
+    }
+  }
+
+  close(): void {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.ws?.close();
+    this.connected = false;
+  }
+
+  private connect(): void {
+    try {
+      this.ws = new WebSocket(BIRDEYE_WS);
+    } catch {
+      this.scheduleReconnect();
+      return;
+    }
+
+    this.ws.on("open", () => {
+      this.ws!.send(JSON.stringify({
+        type: "CONNECT",
+        data: { apiKey: this.apiKey },
+      }));
+    });
+
+    this.ws.on("message", (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString()) as {
+          type: string;
+          data?: { address?: string; value?: number; marketCap?: number };
+        };
+        if (msg.type === "CONNECTED") {
+          this.connected = true;
+          this.flushPending();
+          return;
+        }
+        if (msg.type === "PRICE_DATA" && msg.data?.address) {
+          const addr = msg.data.address;
+          const cbs = this.callbacks.get(addr);
+          if (!cbs) return;
+          const update: PriceUpdate = {
+            priceUsd: msg.data.value ?? 0,
+            marketCapUsd: msg.data.marketCap,
+            source: "birdeye-ws",
+          };
+          for (const cb of cbs) cb(update);
+        }
+      } catch { /* malformed frame */ }
+    });
+
+    this.ws.on("close", () => {
+      this.connected = false;
+      this.scheduleReconnect();
+    });
+
+    this.ws.on("error", () => {
+      this.ws?.close();
+    });
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, 2000);
+  }
+
+  private sendSubscribe(mint: string): void {
+    this.ws?.send(JSON.stringify({
+      type: "SUBSCRIBE_PRICE",
+      data: { queryType: "simple", address: mint },
+    }));
+  }
+
+  private flushPending(): void {
+    for (const fn of this.pending) fn();
+    this.pending.length = 0;
+  }
 }
 
 export class RealtimePriceFeed {
-  private readonly connection: Connection;
-  private readonly solUsdPrice: number;
+  private connection: Connection | null;
+  private birdeye: BirdeyeWs | null;
   private subs = new Map<string, SubEntry>();
-  private reconnectAttempts = 0;
   private closed = false;
 
-  constructor(connection: Connection, solUsdPrice = SOL_USD_FALLBACK) {
-    this.connection = connection;
-    this.solUsdPrice = solUsdPrice;
-  }
-
-  /**
-   * Subscribe to real-time price updates for a token mint.
-   * Returns 0 on success. Falls back to Jupiter polling if the bonding-curve
-   * PDA does not exist (graduated tokens, non-pump tokens).
-   */
-  async subscribe(mint: string, callback: PriceCallback): Promise<number> {
-    const entry: SubEntry = {
-      mint,
-      callback,
-      wsSubId: null,
-      jupiterTimer: null,
-      lastUpdateTs: 0,
-    };
-
-    // Immediate first fetch via Jupiter (no waiting for next WS push or poll tick)
-    void this.fetchJupiter(mint, callback, "jupiter-rest");
-
-    // Try pump.fun bonding-curve WebSocket subscription
-    try {
-      const mintPk = new PublicKey(mint);
-      const [pda] = PublicKey.findProgramAddressSync(
-        [Buffer.from("bonding-curve"), mintPk.toBuffer()],
-        PUMP_PROGRAM,
-      );
-
-      const subId = this.connection.onAccountChange(
-        pda,
-        (accountInfo: AccountInfo<Buffer>, _ctx: Context) => {
-          const update = this.decodeBondingCurve(accountInfo.data);
-          if (update) {
-            entry.lastUpdateTs = Date.now();
-            callback(update);
-          }
-        },
-        "processed",
-      );
-
-      entry.wsSubId = subId;
-    } catch {
-      // PDA derivation or subscription failed — Jupiter polling only
-    }
-
-    // Jupiter REST fallback at 500ms (runs even when WS is active as safety net)
-    entry.jupiterTimer = setInterval(() => {
-      void this.fetchJupiter(mint, callback, "jupiter-rest");
-    }, JUPITER_FALLBACK_MS);
-
-    this.subs.set(mint, entry);
-    return 0;
-  }
-
-  unsubscribe(mint: string): void {
-    const entry = this.subs.get(mint);
-    if (!entry) return;
-
-    if (entry.wsSubId !== null) {
-      void this.connection.removeAccountChangeListener(entry.wsSubId).catch(() => {});
-    }
-    if (entry.jupiterTimer !== null) {
-      clearInterval(entry.jupiterTimer);
-    }
-    this.subs.delete(mint);
+  constructor(connection?: Connection, birdeyeApiKey?: string) {
+    this.connection = connection ?? null;
+    this.birdeye = birdeyeApiKey ? new BirdeyeWs(birdeyeApiKey) : null;
   }
 
   get isConnected(): boolean {
     return !this.closed;
   }
 
-  /** Number of tokens subscribed via WebSocket (not Jupiter fallback). */
-  get wsSubCount(): number {
-    let count = 0;
-    for (const entry of this.subs.values()) {
-      if (entry.wsSubId !== null) count++;
+  async subscribe(mint: string, callback: PriceCallback): Promise<number> {
+    if (this.subs.has(mint)) return 0;
+
+    const entry: SubEntry = {
+      mint,
+      callback,
+      wsSubId: null,
+      jupiterTimer: null,
+      pda: null,
+      solUsd: SOL_USD_FALLBACK,
+    };
+    this.subs.set(mint, entry);
+
+    // Fetch SOL/USD for bonding-curve price conversion
+    void this.fetchSolUsd(entry);
+
+    // Layer 1: Birdeye WebSocket — real-time prices for ALL tokens (validator speed)
+    this.birdeye?.subscribe(mint, (update) => {
+      if (update.priceUsd > 0) callback(update);
+    });
+
+    // Layer 2: Helius WebSocket on pump.fun bonding curve
+    if (this.connection) {
+      try {
+        const mintPk = new PublicKey(mint);
+        const [pda] = PublicKey.findProgramAddressSync(
+          [BONDING_CURVE_SEED, mintPk.toBuffer()],
+          PUMP_PROGRAM,
+        );
+        entry.pda = pda;
+
+        entry.wsSubId = this.connection.onAccountChange(
+          pda,
+          (accountInfo) => this.onBondingCurveUpdate(entry, accountInfo.data),
+          "processed",
+        );
+      } catch {
+        // PDA derivation failed — handled by Birdeye
+      }
     }
-    return count;
+
+    // Layer 3: Jupiter REST at 200ms (always runs as safety net)
+    void this.fetchJupiter(entry);
+    entry.jupiterTimer = setInterval(() => {
+      if (!this.subs.has(mint)) {
+        clearInterval(entry.jupiterTimer!);
+        return;
+      }
+      void this.fetchJupiter(entry);
+    }, JUPITER_MS);
+
+    return 0;
+  }
+
+  unsubscribe(mint: string): void {
+    const entry = this.subs.get(mint);
+    if (!entry) return;
+    this.subs.delete(mint);
+
+    this.birdeye?.unsubscribe(mint);
+    if (entry.wsSubId !== null && this.connection) {
+      this.connection.removeAccountChangeListener(entry.wsSubId).catch(() => {});
+    }
+    if (entry.jupiterTimer) clearInterval(entry.jupiterTimer);
   }
 
   close(): void {
@@ -135,78 +252,60 @@ export class RealtimePriceFeed {
     for (const [mint] of this.subs) {
       this.unsubscribe(mint);
     }
+    this.birdeye?.close();
   }
 
-  private decodeBondingCurve(data: Buffer): PriceUpdate | null {
-    if (data.length < ACCOUNT_DATA_MIN_LEN) return null;
-
+  private onBondingCurveUpdate(entry: SubEntry, data: Buffer): void {
+    if (data.length < 48) return;
     const vt = Number(data.readBigUInt64LE(8));
     const vs = Number(data.readBigUInt64LE(16));
-    const realSupply = Number(data.readBigUInt64LE(40));
+    const supply = Number(data.readBigUInt64LE(40));
+    if (vt <= 0 || vs <= 0) return;
 
-    if (vt <= 0 || vs <= 0) return null;
+    const priceSol = vs / vt;
+    const priceUsd = priceSol * entry.solUsd;
+    const mcUsd = supply > 0 ? priceSol * entry.solUsd * (supply / 1e6) : undefined;
 
-    const priceSol = vs / 1e9 / (vt / 1e6);
-    const priceUsd = priceSol * this.solUsdPrice;
-    if (priceUsd <= 0) return null;
-
-    const mcUsd = realSupply > 0 ? priceUsd * (realSupply / 1e6) : undefined;
-
-    return {
-      priceUsd,
-      marketCapUsd: mcUsd,
-      source: "ws-bonding-curve",
-      latencyMs: undefined,
-    };
+    entry.callback({ priceUsd, marketCapUsd: mcUsd, source: "ws-bonding-curve" });
   }
 
-  private async fetchJupiter(
-    mint: string,
-    callback: PriceCallback,
-    source: "jupiter-rest" | "dexscreener",
-  ): Promise<void> {
+  private async fetchJupiter(entry: SubEntry): Promise<void> {
     try {
-      const r = await fetch(
-        `https://api.jup.ag/price/v2?ids=${mint}&showExtraInfo=true`,
-      );
+      const r = await fetch(`${JUPITER_URL}?ids=${entry.mint}&showExtraInfo=true`);
       if (!r.ok) return;
       const j = (await r.json()) as {
         data?: Record<string, { price: string; extraInfo?: { marketCap?: string } }>;
       };
-      const d = j.data?.[mint];
+      const d = j.data?.[entry.mint];
       if (!d) return;
-      const priceUsd = parseFloat(d.price) || 0;
-      if (priceUsd <= 0) return;
+      const p = parseFloat(d.price) || 0;
+      if (p <= 0) return;
+      entry.callback({ priceUsd: p, marketCapUsd: d.extraInfo?.marketCap ? parseFloat(d.extraInfo.marketCap) : undefined, source: "jupiter-rest" });
+    } catch { /* non-fatal */ }
+  }
 
-      callback({
-        priceUsd,
-        marketCapUsd: d.extraInfo?.marketCap
-          ? parseFloat(d.extraInfo.marketCap)
-          : undefined,
-        source,
-        latencyMs: undefined,
-      });
-    } catch {
-      // Silent — Jupiter is a fallback, failures are non-fatal
-    }
+  private async fetchSolUsd(entry: SubEntry): Promise<void> {
+    try {
+      const r = await fetch(`${JUPITER_URL}?ids=So11111111111111111111111111111111111111112`);
+      if (!r.ok) return;
+      const j = (await r.json()) as { data?: Record<string, { price: string }> };
+      const p = parseFloat(j.data?.["So11111111111111111111111111111111111111112"]?.price ?? "");
+      if (p > 0) entry.solUsd = p;
+    } catch { /* keep default */ }
   }
 }
 
 /**
- * @deprecated Use RealtimePriceFeed instead.
- * Kept for backward compatibility. Wraps the old callback signature.
+ * @deprecated Use RealtimePriceFeed directly.
+ * Backward-compatible wrapper around the legacy callback signature.
  */
 export class HeliusPriceFeed {
   private feed: RealtimePriceFeed | null = null;
 
-  constructor(_wsUrl?: string) {
-    // No-op: legacy constructor. Use setConnection() to activate real feed,
-    // or fall back to standalone Jupiter polling.
-  }
+  constructor(_wsUrl?: string) {}
 
-  /** Activate real-time WebSocket feed. Call before subscribe(). */
-  setConnection(connection: Connection, solUsdPrice?: number): void {
-    this.feed = new RealtimePriceFeed(connection, solUsdPrice);
+  setConnection(connection: Connection, solUsdPrice?: number, birdeyeApiKey?: string): void {
+    this.feed = new RealtimePriceFeed(connection, birdeyeApiKey);
   }
 
   async subscribe(
@@ -218,27 +317,22 @@ export class HeliusPriceFeed {
         legacyCb(update.priceUsd, update.marketCapUsd, { source: update.source });
       });
     }
-
-    // Standalone Jupiter polling (no Connection provided) — keep legacy behavior
     const interval = setInterval(async () => {
       try {
-        const r = await fetch(
-          `https://api.jup.ag/price/v2?ids=${mint}&showExtraInfo=true`,
-        );
+        const r = await fetch(`${JUPITER_URL}?ids=${mint}&showExtraInfo=true`);
         if (!r.ok) return;
         const j = (await r.json()) as {
           data?: Record<string, { price: string; extraInfo?: { marketCap?: string } }>;
         };
         const d = j.data?.[mint];
         if (!d) return;
-        const priceUsd = parseFloat(d.price) || 0;
-        if (priceUsd <= 0) return;
-        legacyCb(priceUsd, d.extraInfo?.marketCap
-          ? parseFloat(d.extraInfo.marketCap)
-          : undefined, { source: "jupiter" });
+        const p = parseFloat(d.price) || 0;
+        if (p <= 0) return;
+        legacyCb(p, d.extraInfo?.marketCap ? parseFloat(d.extraInfo.marketCap) : undefined, {
+          source: "jupiter",
+        });
       } catch {}
-    }, JUPITER_FALLBACK_MS);
-
+    }, JUPITER_MS);
     return 0;
   }
 

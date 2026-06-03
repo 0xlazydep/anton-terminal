@@ -755,14 +755,16 @@ async function bootstrap(): Promise<void> {
           // Keep fallback
         }
 
-        priceFeed.setConnection(wsConnection, solUsd);
-        log(`price feed: Helius WebSocket active (bonding-curve <100ms) + Jupiter 500ms fallback`);
+        const birdeyeKey = env.BIRDEYE_API_KEY?.trim() || undefined;
+        priceFeed.setConnection(wsConnection, solUsd, birdeyeKey);
+        const wsLabel = birdeyeKey ? "Birdeye WS" : "Helius WS";
+        log(`price feed: ${wsLabel} active (${birdeyeKey ? "all-token <50ms" : "bonding-curve <100ms"}) + Jupiter 200ms fallback`);
         log(`price feed: SOL/USD $${solUsd.toFixed(2)}`);
       } catch (err) {
-        log(`price feed: WS setup failed — Jupiter polling 500ms (${String(err).slice(0, 60)})`);
+        log(`price feed: WS setup failed — Jupiter polling 200ms (${String(err).slice(0, 60)})`);
       }
     } else {
-      log("price feed: Jupiter polling 500ms (no WS endpoint configured)");
+      log("price feed: Jupiter polling 200ms (no WS endpoint configured)");
     }
   }
 
