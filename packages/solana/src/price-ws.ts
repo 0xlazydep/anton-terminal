@@ -119,6 +119,7 @@ class BirdeyeWs {
         if (msg.type === "CONNECTED") {
           this.connected = true;
           this.flushPending();
+          process.stderr.write(`[birdeye] connected — real-time price feed active\n`);
           return;
         }
         if (msg.type === "PRICE_DATA" && msg.data?.address) {
@@ -129,8 +130,11 @@ class BirdeyeWs {
             priceUsd: msg.data.value ?? 0,
             marketCapUsd: msg.data.marketCap,
             source: "birdeye-ws",
+            latencyMs: Date.now(),
           };
-          for (const cb of cbs) cb(update);
+          for (const cb of cbs) {
+            cb(update);
+          }
         }
       } catch { /* malformed frame */ }
     });
