@@ -844,7 +844,7 @@ async function bootstrap(): Promise<void> {
     log(`using Redis bus — run @anton/realtime separately for the UI`);
   }
 
-  const POLL_MS = Number(process.env.ANTON_POLL_MS ?? 3000);
+  const POLL_MS = Number(process.env.ANTON_POLL_MS ?? 5000);
   let polling = false;
   const tickTimer = setInterval(() => {
     if (polling) return;

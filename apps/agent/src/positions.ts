@@ -281,9 +281,14 @@ export class PositionBook {
       const subId = await this.priceFeed.subscribe(pos.mint, (priceUsd, marketCapUsd) => {
         const p = this.positions.get(id);
         if (!p) return;
-        if (priceUsd > 0) p.currentPriceUsd = priceUsd;
+        if (priceUsd > 0) {
+          p.currentPriceUsd = priceUsd;
+          if (priceUsd > p.peakPriceUsd) p.peakPriceUsd = priceUsd;
+        }
         if (marketCapUsd && marketCapUsd > 0) p.currentMarketCapUsd = marketCapUsd;
         p.lastWsPrice = Date.now();
+        const pnl = this.pnlPct(p);
+        this.checkExitConditions(p, pnl);
       });
       this.wsSubs.set(pos.mint, subId);
     }
@@ -292,8 +297,9 @@ export class PositionBook {
   }
 
   /**
-   * Poll the live price of every open position from DexScreener and resolve
-   * SL/TP exits. Positions whose fetch fails keep their last price untouched.
+   * Refresh market-cap from DexScreener for every open position.
+   * Price and exit checks are handled in real-time by HeliusPriceFeed
+   * (push-based, sub-100ms). This poll is MC-only, 5s interval.
    */
   async poll(): Promise<void> {
     await Promise.all(
@@ -343,25 +349,14 @@ export class PositionBook {
   }
 
   private async refresh(pos: OpenPosition): Promise<void> {
-    let priceUsd: number | undefined;
-    let marketCapUsd: number | undefined;
     try {
       const snap = await fetchTokenMarket(pos.mint);
-      priceUsd = snap.priceUsd;
-      marketCapUsd = snap.marketCapUsd;
+      if (snap.marketCapUsd && snap.marketCapUsd > 0) {
+        pos.currentMarketCapUsd = snap.marketCapUsd;
+      }
     } catch {
       return;
     }
-
-    if (priceUsd !== undefined && priceUsd > 0) pos.currentPriceUsd = priceUsd;
-    if (marketCapUsd !== undefined && marketCapUsd > 0) pos.currentMarketCapUsd = marketCapUsd;
-
-    if (pos.currentPriceUsd > pos.peakPriceUsd) {
-      pos.peakPriceUsd = pos.currentPriceUsd;
-    }
-
-    const pnlPct = this.pnlPct(pos);
-    this.checkExitConditions(pos, pnlPct);
   }
 
   /**
