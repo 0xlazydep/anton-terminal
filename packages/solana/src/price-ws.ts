@@ -93,6 +93,8 @@ export class HeliusPriceFeed {
   private route(data: Record<string, unknown>): void {
     const id = (data as { id?: number }).id;
     if (id !== undefined) {
+      const hasResp = this.pending.has(id);
+      process.stderr.write(`[ws-msg] resp id=${id} pending=${hasResp} result=${JSON.stringify(data.result)?.slice(0,60)}\n`);
       this.handleResponse(id, data);
       return;
     }
@@ -101,10 +103,11 @@ export class HeliusPriceFeed {
     if (!params) return;
     const heliusId = (params.subscription as number) ?? 0;
     const sub = this.heliusSubMap.get(heliusId);
-    if (!sub) return;
+    if (!sub) { process.stderr.write(`[ws-msg] unk sub ${heliusId} (have ${[...this.heliusSubMap.keys()].join(",")})\n`); return; }
 
     const sig = this.extractSignature(params);
     if (sig) {
+      process.stderr.write(`[ws-msg] logs sig=${sig.slice(0,12)}...\n`);
       const rid = this.nextId++;
       this.pending.set(rid, { mint: sub.mint, sig });
       this.send({ jsonrpc: "2.0", id: rid, method: "getTransaction",
@@ -112,6 +115,7 @@ export class HeliusPriceFeed {
       return;
     }
 
+    process.stderr.write(`[ws-msg] curve update for ${sub.mint.slice(0,8)}\n`);
     this.handleAccountUpdate(params, sub);
   }
 
@@ -126,11 +130,12 @@ export class HeliusPriceFeed {
     const v = r?.value as Record<string, unknown> | undefined;
     const d = v?.data as string | string[] | undefined;
     const raw = Array.isArray(d) ? d[0] : d;
-    if (!raw) return;
+    if (!raw) { process.stderr.write(`[ws-msg] curve no data\n`); return; }
 
     const price = this.decodeCurve(raw);
-    if (!price || price <= 0) return;
+    if (!price || price <= 0) { process.stderr.write(`[ws-msg] curve decode fail\n`); return; }
 
+    process.stderr.write(`[ws-msg] curve price=${price.toExponential(2)} SOL\n`);
     const now = Date.now();
     sub.lastPrice = price;
     sub.lastWsAt = now;
