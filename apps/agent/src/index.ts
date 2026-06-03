@@ -949,47 +949,54 @@ async function bootstrap(): Promise<void> {
     }
   }, 15_000);
 
-  // Batch Jupiter poll — update MC for screening tokens every 800ms
+  // Batch poll — update MC for screening + positions every 800ms
   const screeningPollTimer = setInterval(async () => {
     if (recentScreened.size === 0) return;
     const mints = [...recentScreened.keys()].slice(0, 30);
+    const found = new Set<string>();
     try {
-      const url = `https://api.jup.ag/price/v2?ids=${mints.join(",")}&showExtraInfo=true`;
-      const res = await fetch(url);
-      if (!res.ok) return;
-      const json = (await res.json()) as { data?: Record<string, { price: string; extraInfo?: { marketCap?: string } }> };
-      const found = new Set<string>();
-      if (json.data) {
-        for (const [mint, info] of Object.entries(json.data)) {
-          found.add(mint);
-          const row = recentScreened.get(mint);
-          if (!row) continue;
-          const price = parseFloat(info.price) || 0;
-          if (price <= 0) continue;
-          const mc = info.extraInfo?.marketCap ? parseFloat(info.extraInfo.marketCap) : undefined;
-          publishScreening(bus, {
-            mint, symbol: row.symbol, score: row.score, verdict: row.verdict as any,
-            flags: row.flags, liquidityUsd: row.liquidityUsd, marketCapUsd: mc, pairAgeSec: row.pairAgeSec,
-            ts: Date.now(), source: row.source as any, llmAction: row.llmAction,
-          });
-        }
-      }
-      // DexScreener + bonding curve fallback for tokens Jupiter missed
-      const missed = mints.filter((m) => !found.has(m));
-      for (const mint of missed) {
+      // Pass 1: Pump.fun tokens via bonding curve (on-chain, real-time)
+      const pumpMints = mints.filter((m) => m.endsWith("pump"));
+      for (const mint of pumpMints) {
         const row = recentScreened.get(mint);
         if (!row) continue;
-        // Try bonding curve first (Pump.fun tokens — 0ms on-chain)
         const curve = await fetchBondingCurvePrice(mint);
         if (curve && curve.priceUsd > 0) {
+          found.add(mint);
           publishScreening(bus, {
             mint, symbol: row.symbol, score: row.score, verdict: row.verdict as any,
             flags: row.flags, liquidityUsd: row.liquidityUsd, marketCapUsd: curve.mcUsd, pairAgeSec: row.pairAgeSec,
             ts: Date.now(), source: row.source as any, llmAction: row.llmAction,
           });
-          continue;
         }
-        // Last resort: DexScreener
+      }
+
+      // Pass 2: remaining tokens via Jupiter batch
+      const jupMints = mints.filter((m) => !found.has(m));
+      if (jupMints.length > 0) {
+        const url = `https://api.jup.ag/price/v2?ids=${jupMints.join(",")}&showExtraInfo=true`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const json = (await res.json()) as { data?: Record<string, { price: string; extraInfo?: { marketCap?: string } }> };
+          if (json.data) {
+            for (const [mint, info] of Object.entries(json.data)) {
+              found.add(mint);
+              const row = recentScreened.get(mint);
+              if (!row) continue;
+              const price = parseFloat(info.price) || 0;
+              if (price <= 0) continue;
+              const mc = info.extraInfo?.marketCap ? parseFloat(info.extraInfo.marketCap) : undefined;
+              publishScreening(bus, {
+                mint, symbol: row.symbol, score: row.score, verdict: row.verdict as any,
+                flags: row.flags, liquidityUsd: row.liquidityUsd, marketCapUsd: mc, pairAgeSec: row.pairAgeSec,
+                ts: Date.now(), source: row.source as any, llmAction: row.llmAction,
+              });
+            }
+          }
+        }
+      }
+
+      // Pass 3: DexScreener for anything still missed
         try {
           const { fetchTokenMarket } = await import("@anton/ingestion");
           const snap = await fetchTokenMarket(mint);
