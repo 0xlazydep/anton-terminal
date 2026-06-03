@@ -954,12 +954,12 @@ async function bootstrap(): Promise<void> {
   const screeningPollTimer = setInterval(async () => {
     if (recentScreened.size === 0) return;
     const mints = [...recentScreened.keys()].slice(0, 30);
-    const found = new Set<string>();
-    let jupData: Record<string, { price: string; extraInfo?: { marketCap?: string } }> | undefined;
     try {
       // Pass 1: Jupiter batch (1 API call for all tokens)
       const url = `https://api.jup.ag/price/v2?ids=${mints.join(",")}&showExtraInfo=true`;
       const res = await fetch(url);
+      const found = new Set<string>();
+      let jupData: Record<string, { price: string; extraInfo?: { marketCap?: string } }> | undefined;
       if (res.ok) {
         const json = (await res.json()) as { data?: Record<string, { price: string; extraInfo?: { marketCap?: string } }> };
         jupData = json.data;
@@ -985,46 +985,45 @@ async function bootstrap(): Promise<void> {
         }
       }
 
-      // Pass 2: Bonding curve for tokens Jupiter missed (parallel)
+      // Pass 2: DexScreener for tokens Jupiter missed (fast REST, 200ms each)
       const missed = mints.filter((m) => !found.has(m));
-      if (missed.length > 0) {
-        const results = await Promise.all(missed.map(async (mint) => {
-          const row = recentScreened.get(mint);
-          if (!row) return null;
-          const curve = await fetchBondingCurvePrice(mint);
-          if (!curve || curve.priceUsd <= 0) return null;
-          return { mint, row, curve };
-        }));
-        for (const r of results) {
-          if (!r) continue;
-          found.add(r.mint);
-          const mc = r.curve.mcUsd ?? 0;
-          const last = lastPublishedMc.get(r.mint) ?? 0;
-          if (last > 0 && Math.abs(mc - last) / last < 0.01) continue;
-          lastPublishedMc.set(r.mint, mc);
-          publishScreening(bus, {
-            mint: r.mint, symbol: r.row.symbol, score: r.row.score, verdict: r.row.verdict as any,
-            flags: r.row.flags, liquidityUsd: r.row.liquidityUsd, marketCapUsd: r.curve.mcUsd, pairAgeSec: r.row.pairAgeSec,
-            ts: Date.now(), source: r.row.source as any, llmAction: r.row.llmAction,
-          });
-        }
+      for (const mint of missed) {
+        const row = recentScreened.get(mint);
+        if (!row) continue;
+        try {
+          const { fetchTokenMarket } = await import("@anton/ingestion");
+          const snap = await fetchTokenMarket(mint);
+          if (snap.marketCapUsd && snap.marketCapUsd > 0) {
+            const last = lastPublishedMc.get(mint) ?? 0;
+            if (last > 0 && Math.abs(snap.marketCapUsd - last) / last < 0.01) continue;
+            lastPublishedMc.set(mint, snap.marketCapUsd);
+            publishScreening(bus, {
+              mint, symbol: row.symbol, score: row.score, verdict: row.verdict as any,
+              flags: row.flags, liquidityUsd: snap.liquidityUsd ?? row.liquidityUsd,
+              marketCapUsd: snap.marketCapUsd, pairAgeSec: row.pairAgeSec,
+              ts: Date.now(), source: row.source as any, llmAction: row.llmAction,
+            });
+          }
+        } catch {}
       }
 
-      // Pass 3: Update positions (Jupiter first, bonding curve fallback)
+      // Pass 3: Update positions from same Jupiter batch data
       for (const pos of book.snapshotState().positions) {
-        const jupInfo = jupData?.[pos.mint];
-        if (jupInfo) {
-          const price = parseFloat(jupInfo.price) || 0;
+        if (info) {
+          const price = parseFloat(info.price) || 0;
           if (price > 0) {
             const mc = jupInfo.extraInfo?.marketCap ? parseFloat(jupInfo.extraInfo.marketCap) : undefined;
             book.updateFromPoll(pos.id, price, mc);
             continue;
           }
         }
-        const curve = await fetchBondingCurvePrice(pos.mint);
-        if (curve && curve.priceUsd > 0) {
-          book.updateFromPoll(pos.id, curve.priceUsd, curve.mcUsd);
-        }
+        try {
+          const { fetchTokenMarket } = await import("@anton/ingestion");
+          const snap = await fetchTokenMarket(pos.mint);
+          if (snap.priceUsd && snap.priceUsd > 0) {
+            book.updateFromPoll(pos.id, snap.priceUsd, snap.marketCapUsd);
+          }
+        } catch {}
       }
     } catch {}
   }, 800);
