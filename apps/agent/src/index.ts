@@ -755,8 +755,10 @@ async function bootstrap(): Promise<void> {
           // Keep fallback
         }
 
-        priceFeed.setConnection(wsConnection);
-        log(`price feed: Helius WS active (bonding-curve accountSubscribe, exact on-chain price) + Jupiter 1s fallback`);
+        const gmgnKey = env.GMGN_API_KEY?.trim() || undefined;
+        priceFeed.setConnection(wsConnection, gmgnKey);
+        const pollSrc = gmgnKey ? "GMGN API (matches UI exactly)" : "Jupiter";
+        log(`price feed: Helius WS (bonding-curve <100ms) + ${pollSrc} 1s poll`);
         log(`price feed: SOL/USD $${solUsd.toFixed(2)}`);
       } catch (err) {
         log(`price feed: WS setup failed — Jupiter polling 1s (${String(err).slice(0, 60)})`);

@@ -1,12 +1,13 @@
 /**
- * Real-time price feed — pure Helius WebSocket.
+ * Real-time price feed for Solana meme coins.
  *
- *   accountSubscribe on pump.fun bonding-curve PDA
- *   → Decodes virtual reserves directly from on-chain account data on every
- *     buy/sell. Sub-100ms. This is the exact same data GMGN/Axiom read.
+ *   1. accountSubscribe on pump.fun bonding-curve PDA (Helius WS)
+ *      → Sub-100ms push, exact on-chain price. Same data GMGN reads.
  *
- *   Jupiter REST polling at 1000ms
- *   → Fallback for graduated/non-pumpfun tokens (no bonding curve PDA).
+ *   2. GMGN OpenAPI poll at 1s (when GMGN_API_KEY is set)
+ *      → price + market cap that match the GMGN UI exactly.
+ *
+ *   3. Jupiter REST poll at 1s (fallback when GMGN unavailable)
  *
  * Bonding-curve account layout (pump.fun):
  *   offset  8 → virtualTokenReserves (u64, 6 decimals)
@@ -14,22 +15,22 @@
  *   offset 40 → tokenTotalSupply     (u64, 6 decimals)
  *
  * priceSol = (virtualSolReserves / 1e9) / (virtualTokenReserves / 1e6)
- * marketCap = priceUsd * (tokenTotalSupply / 1e6)
  */
 
 import { Connection, PublicKey } from "@solana/web3.js";
 import type { AccountInfo, Context } from "@solana/web3.js";
+import { GmgnClient } from "./gmgn.js";
 
 const PUMP_PROGRAM = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
 const JUPITER_URL = "https://api.jup.ag/price/v2";
-const JUPITER_POLL_MS = 1000;
+const POLL_MS = 1000;
 const SOL_USD_FALLBACK = 130;
 const BONDING_CURVE_SEED = Buffer.from("bonding-curve");
 
 export interface PriceUpdate {
   priceUsd: number;
   marketCapUsd?: number;
-  source: "ws-bonding-curve" | "jupiter-rest";
+  source: "ws-bonding-curve" | "gmgn-api" | "jupiter-rest";
   receivedAt?: number;
 }
 
@@ -39,18 +40,20 @@ interface SubEntry {
   mint: string;
   callback: PriceCallback;
   accountSubId: number | null;
-  jupiterTimer: ReturnType<typeof setInterval> | null;
+  pollTimer: ReturnType<typeof setInterval> | null;
   pda: PublicKey | null;
   solUsd: number;
 }
 
 export class RealtimePriceFeed {
   private readonly connection: Connection;
+  private readonly gmgn: GmgnClient | null;
   private subs = new Map<string, SubEntry>();
   private closed = false;
 
-  constructor(connection: Connection) {
+  constructor(connection: Connection, gmgnApiKey?: string) {
     this.connection = connection;
+    this.gmgn = gmgnApiKey ? new GmgnClient(gmgnApiKey) : null;
   }
 
   get isConnected(): boolean {
@@ -64,14 +67,14 @@ export class RealtimePriceFeed {
       mint,
       callback,
       accountSubId: null,
-      jupiterTimer: null,
+      pollTimer: null,
       pda: null,
       solUsd: SOL_USD_FALLBACK,
     };
     this.subs.set(mint, entry);
 
     void this.fetchSolUsd(entry);
-    void this.fetchJupiter(entry);
+    void this.poll(entry);
 
     try {
       const mintPk = new PublicKey(mint);
@@ -88,16 +91,16 @@ export class RealtimePriceFeed {
       );
       process.stderr.write(`[feed] bonding-curve WS active for ${mint.slice(0, 8)}\n`);
     } catch {
-      process.stderr.write(`[feed] bonding-curve WS failed for ${mint.slice(0, 8)} — Jupiter only\n`);
+      process.stderr.write(`[feed] bonding-curve WS failed for ${mint.slice(0, 8)}\n`);
     }
 
-    entry.jupiterTimer = setInterval(() => {
+    entry.pollTimer = setInterval(() => {
       if (!this.subs.has(mint)) {
-        clearInterval(entry.jupiterTimer!);
+        clearInterval(entry.pollTimer!);
         return;
       }
-      void this.fetchJupiter(entry);
-    }, JUPITER_POLL_MS);
+      void this.poll(entry);
+    }, POLL_MS);
 
     return 0;
   }
@@ -110,7 +113,7 @@ export class RealtimePriceFeed {
     if (entry.accountSubId !== null) {
       this.connection.removeAccountChangeListener(entry.accountSubId).catch(() => {});
     }
-    if (entry.jupiterTimer) clearInterval(entry.jupiterTimer);
+    if (entry.pollTimer) clearInterval(entry.pollTimer);
   }
 
   close(): void {
@@ -139,6 +142,23 @@ export class RealtimePriceFeed {
       source: "ws-bonding-curve",
       receivedAt: Date.now(),
     });
+  }
+
+  private async poll(entry: SubEntry): Promise<void> {
+    // Prefer GMGN — its price/MC matches the GMGN UI exactly
+    if (this.gmgn) {
+      const g = await this.gmgn.fetchTokenInfo(entry.mint);
+      if (g && g.priceUsd > 0) {
+        entry.callback({
+          priceUsd: g.priceUsd,
+          marketCapUsd: g.marketCapUsd,
+          source: "gmgn-api",
+          receivedAt: Date.now(),
+        });
+        return;
+      }
+    }
+    await this.fetchJupiter(entry);
   }
 
   private async fetchJupiter(entry: SubEntry): Promise<void> {
@@ -188,8 +208,8 @@ export class HeliusPriceFeed {
 
   constructor() {}
 
-  setConnection(connection: Connection): void {
-    this.feed = new RealtimePriceFeed(connection);
+  setConnection(connection: Connection, gmgnApiKey?: string): void {
+    this.feed = new RealtimePriceFeed(connection, gmgnApiKey);
   }
 
   async subscribe(
@@ -216,7 +236,7 @@ export class HeliusPriceFeed {
           source: "jupiter",
         });
       } catch {}
-    }, JUPITER_POLL_MS);
+    }, POLL_MS);
     return 0;
   }
 
