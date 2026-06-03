@@ -446,7 +446,7 @@ export class PositionBook {
     if (!mintStillOpen) {
       const subId = this.wsSubs.get(pos.mint);
       if (subId !== undefined && this.priceFeed) {
-        this.priceFeed.unsubscribe(subId);
+        this.priceFeed.unsubscribe(pos.mint);
         this.wsSubs.delete(pos.mint);
         this.wsSubMints.delete(pos.mint);
       }
