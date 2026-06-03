@@ -57,6 +57,7 @@ interface OpenPosition {
   actualEntrySol?: number;
   lastWsPrice: number;
   lastSource: string;
+  updateCount: number;
 }
 
 export interface PositionBookLimits {
@@ -130,6 +131,7 @@ export class PositionBook {
         trailingActivated: false,
         lastWsPrice: 0,
         lastSource: "",
+        updateCount: 0,
       });
       if (this.priceFeed && !this.wsSubMints.has(r.mint)) {
         this.wsSubMints.add(r.mint);
@@ -266,6 +268,7 @@ export class PositionBook {
       actualEntrySol,
       lastWsPrice: 0,
       lastSource: "",
+      updateCount: 0,
     };
     this.positions.set(id, pos);
 
@@ -425,11 +428,13 @@ export class PositionBook {
 
   private logSource(pos: OpenPosition, source?: string): void {
     const src = source ?? "unknown";
-    if (src === pos.lastSource) return;
-    pos.lastSource = src;
-    process.stderr.write(
-      `[price] ${pos.symbol ?? pos.mint.slice(0, 8)} source=${src}\n`,
-    );
+    pos.updateCount++;
+    if (src !== pos.lastSource || pos.updateCount % 10 === 1) {
+      pos.lastSource = src;
+      process.stderr.write(
+        `[price] ${pos.symbol ?? pos.mint.slice(0, 8)} @$${pos.currentPriceUsd.toFixed(8)} source=${src} #${pos.updateCount}\n`,
+      );
+    }
   }
 
   private async close(pos: OpenPosition, pnlPct: number, reason: string): Promise<void> {

@@ -79,10 +79,11 @@ export class RealtimePriceFeed {
         (accountInfo: AccountInfo<Buffer>, _ctx: Context) =>
           this.onBondingCurveUpdate(entry, accountInfo.data),
         "processed",
-      );
-    } catch {
-      // PDA derivation failed — Jupiter polling covers it
-    }
+        );
+        process.stderr.write(`[feed] bonding-curve sub active for ${mint.slice(0, 8)}\n`);
+      } catch {
+        process.stderr.write(`[feed] bonding-curve sub failed for ${mint.slice(0, 8)} — Jupiter only\n`);
+      }
 
     // Jupiter REST polling at 1s
     entry.jupiterTimer = setInterval(() => {
