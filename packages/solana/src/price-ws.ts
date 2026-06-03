@@ -87,23 +87,34 @@ export class HeliusPriceFeed {
       });
       if (!res.ok) { process.stderr.write(`[curve] ${sub.mint.slice(0,8)} HTTP ${res.status}\n`); return; }
       const json = (await res.json()) as {
-        result?: { value?: { data?: [string, string] } };
+        result?: { value?: { data?: unknown } };
       };
-      const data = json.result?.value?.data;
-      if (!data) { process.stderr.write(`[curve] ${sub.mint.slice(0,8)} no account data (PDA=${sub.pda.slice(0,12)}...)\n`); return; }
+      const d = json.result?.value?.data;
+      process.stderr.write(`[curve] ${sub.mint.slice(0,8)} rawData=${JSON.stringify(d)?.slice(0,100)}\n`);
+      const data = d as [string, string] | string | undefined;
       const raw = Array.isArray(data) ? data[0] : data;
-      if (!raw) return;
+      if (!raw || typeof raw !== "string") { process.stderr.write(`[curve] ${sub.mint.slice(0,8)} bad raw type=${typeof raw}\n`); return; }
 
-      const curve = this.decodeCurve(raw);
-      if (!curve || curve.price <= 0) { process.stderr.write(`[curve] ${sub.mint.slice(0,8)} decode fail len=${raw.length}\n`); return; }
-
-      const priceUsd = curve.price * sub.solUsdRef;
-      sub.lastPrice = curve.price;
-      if (curve.supply > 0 && !sub.supply) sub.supply = curve.supply;
-      const mc = sub.supply ? curve.price * sub.solUsdRef * sub.supply : undefined;
+      process.stderr.write(`[curve] ${sub.mint.slice(0,8)} rawLen=${raw.length} head=${raw.slice(0,20)}\n`);
+      const buf = Buffer.from(raw, "base64");
+      process.stderr.write(`[curve] ${sub.mint.slice(0,8)} bufLen=${buf.length} hex0=${buf.slice(0,8).toString("hex")}\n`);
+      if (buf.length < 48) { process.stderr.write(`[curve] too short\n`); return; }
+      
+      const vt = Number(buf.readBigUInt64LE(8));
+      const vs = Number(buf.readBigUInt64LE(16));
+      const sup = Number(buf.readBigUInt64LE(40));
+      process.stderr.write(`[curve] vt=${vt} vs=${vs} sup=${sup}\n`);
+      
+      const priceSol = (vs / 1e9) / (vt / 1e6);
+      if (priceSol <= 0) return;
+      
+      const priceUsd = priceSol * sub.solUsdRef;
+      sub.lastPrice = priceSol;
+      if (sup > 0 && !sub.supply) sub.supply = sup / 1e6;
+      const mc = sub.supply ? priceSol * sub.solUsdRef * sub.supply : undefined;
       process.stderr.write(`[curve] ${sub.mint.slice(0,8)} $${priceUsd?.toExponential(3)} mc=${mc ? (mc/1000).toFixed(1)+"K" : "?"}\n`);
       sub.callback(priceUsd, mc, { source: "curve" });
-    } catch(err) { process.stderr.write(`[curve] ${sub.mint.slice(0,8)} error ${String(err).slice(0,60)}\n`); }
+    } catch(err) { process.stderr.write(`[curve] ${sub.mint.slice(0,8)} err ${String(err).slice(0,80)}\n`); }
   }
 
   private async fetchJup(sub: ActiveSub): Promise<void> {
