@@ -310,7 +310,6 @@ export class PositionBook {
             p.currentMarketCapUsd = marketCapUsd;
           }
         }
-        process.stderr.write(`[ws-upd] ${p.symbol ?? p.mint.slice(0,6)} $${priceUsd?.toExponential(2)} mc=${((p.currentMarketCapUsd ?? 0)/1000).toFixed(0)}K src=${meta?.source ?? "?"}\n`);
         p.lastWsPrice = Date.now();
         const pnl = this.pnlPct(p);
         this.checkExitConditions(p, pnl);
