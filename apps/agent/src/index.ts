@@ -916,7 +916,7 @@ async function bootstrap(): Promise<void> {
     }
   }, 15_000);
 
-  // Batch Jupiter poll — update MC for all screening tokens every 2s
+  // Batch Jupiter poll — update MC for screening tokens every 800ms
   const screeningPollTimer = setInterval(async () => {
     if (recentScreened.size === 0) return;
     const mints = [...recentScreened.keys()].slice(0, 30);
@@ -925,21 +925,42 @@ async function bootstrap(): Promise<void> {
       const res = await fetch(url);
       if (!res.ok) return;
       const json = (await res.json()) as { data?: Record<string, { price: string; extraInfo?: { marketCap?: string } }> };
-      if (!json.data) return;
-      for (const [mint, info] of Object.entries(json.data)) {
+      const found = new Set<string>();
+      if (json.data) {
+        for (const [mint, info] of Object.entries(json.data)) {
+          found.add(mint);
+          const row = recentScreened.get(mint);
+          if (!row) continue;
+          const price = parseFloat(info.price) || 0;
+          if (price <= 0) continue;
+          const mc = info.extraInfo?.marketCap ? parseFloat(info.extraInfo.marketCap) : undefined;
+          publishScreening(bus, {
+            mint, symbol: row.symbol, score: row.score, verdict: row.verdict as any,
+            flags: row.flags, liquidityUsd: row.liquidityUsd, marketCapUsd: mc, pairAgeSec: row.pairAgeSec,
+            ts: Date.now(), source: row.source as any, llmAction: row.llmAction,
+          });
+        }
+      }
+      // DexScreener fallback for tokens Jupiter missed
+      const missed = mints.filter((m) => !found.has(m));
+      for (const mint of missed) {
         const row = recentScreened.get(mint);
         if (!row) continue;
-        const price = parseFloat(info.price) || 0;
-        if (price <= 0) continue;
-        const mc = info.extraInfo?.marketCap ? parseFloat(info.extraInfo.marketCap) : undefined;
-        publishScreening(bus, {
-          mint, symbol: row.symbol, score: row.score, verdict: row.verdict as "SAFE" | "CAUTION" | "REJECT",
-          flags: row.flags, liquidityUsd: row.liquidityUsd, marketCapUsd: mc, pairAgeSec: row.pairAgeSec,
-          ts: Date.now(), source: row.source as any, llmAction: row.llmAction,
-        });
+        try {
+          const { fetchTokenMarket } = await import("@anton/ingestion");
+          const snap = await fetchTokenMarket(mint);
+          if (snap.marketCapUsd && snap.marketCapUsd > 0) {
+            publishScreening(bus, {
+              mint, symbol: row.symbol, score: row.score, verdict: row.verdict as any,
+              flags: row.flags, liquidityUsd: snap.liquidityUsd ?? row.liquidityUsd,
+              marketCapUsd: snap.marketCapUsd, pairAgeSec: row.pairAgeSec,
+              ts: Date.now(), source: row.source as any, llmAction: row.llmAction,
+            });
+          }
+        } catch {}
       }
     } catch {}
-  }, 2000);
+  }, 800);
 
   let running = true;
   const loop = async (): Promise<void> => {
