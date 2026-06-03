@@ -517,4 +517,67 @@ cd apps/dashboard && npx next build && cd ../..
 pm2 restart anton-agent
 PORT=4000 pm2 restart anton-dashboard
 pm2 logs anton-agent --lines 50
+
+---
+
+## 2026-06-03 (Session 2 — Market Data Pipeline Fix)
+
+### Context
+Agent trade decisions correct but using stale data (5-20s behind GMGN). SL/TP not firing because position prices frozen. Root cause: multiple competing data sources with race conditions.
+
+### What Was Attempted (and Failed)
+| Approach | Outcome | Why Failed |
+|---|---|---|
+| Helius WebSocket `logsSubscribe` + `getTransaction` | Never delivered data | Subscription ID mismatch — Helius-assigned sub ID ≠ our internal ID |
+| Helius WebSocket `transactionSubscribe` | Never delivered data | Doesn't work for Pump.fun bonding curve tokens |
+| Helius WebSocket `accountSubscribe` bonding curve PDA | Subscribed, decode fail | Bonding curve account layout wrong / token already graduated |
+| Helius `getAsset` DAS API | No data returned | API doesn't support Pump.fun tokens |
+| Bonding curve PDA REST decode | Parallel sub slow, decode uncertain | Sequential `await` per token = 30×300ms = 9s cycle |
+
+### What Actually Works (Final Architecture)
+**Batch poll every 800ms — 3-pass priority:**
+
+1. **Jupiter batch** (1 API call): `api.jup.ag/price/v2?ids=t1,t2,...&showExtraInfo=true`
+   - Covers ALL tokens in one request (screening + positions)
+   - Fast for established/graduated tokens (~200ms)
+   
+2. **DexScreener individual** (per token): `fetchTokenMarket(mint)` 
+   - Fallback for tokens Jupiter hasn't indexed yet
+   - Each call ~200-300ms, sequential (acceptable for the few missed tokens)
+
+3. **Positions**: use same Jupiter batch data → `book.updateFromPoll()` → `checkExitConditions()` → SL/TP fire
+
+### Key Code Changes
+- `apps/agent/src/index.ts` — `screeningPollTimer` (800ms batch Jupiter + DexScreener), `recentScreened` map, `lastPublishedMc` anti-flicker
+- `apps/agent/src/positions.ts` — `updateFromPoll()` method (no lastWsPrice set, calls checkExitConditions), `loadFromDb()` re-subscribes positions
+- `apps/dashboard/hooks/use-realtime.ts` — `onScreening` handler merges ALL fields (MC) not just llmAction
+- `apps/dashboard/components/panels/Screening.tsx` — MC column added next to LIQ
+- `packages/solana/src/price-ws.ts` — simplified to Jupiter REST polling only, no WebSocket
+- `packages/solana/src/swap.ts` — priority fee cap reduced 0.001→0.0001 SOL, `veryHigh`→`high`, native SOL balance delta from `preBalances/postBalances`
+- `packages/data/src/queries/trades.ts` — `recordTrade()` + `getFeeBreakdown()` (new)
+- `packages/shared-types/src/events.ts` — `FeeBreakdownEvent`, `marketCapUsd` on `ScreeningResultEvent`
+
+### Critical Bugs Found & Fixed
+1. **Subscription ID mismatch**: Helius `logsSubscribe` returns different ID than our internal → all WS notifications silently skipped
+2. **Native SOL not in tokenBalances**: SOL swaps use lamports (`preBalances/postBalances`), not `preTokenBalances`
+3. **MC frozen**: `updateFromPoll` set `lastWsPrice` → blocked DexScreener poll → tokens without Jupiter data NEVER updated
+4. **SL not firing**: position updates were bonding-curve-only → if curve failed, position frozen with no fallback
+5. **Anti-flicker**: publishScreening on 800ms caused full-row React re-render — fixed by `lastPublishedMc` 1% threshold guard
+6. **Sequential bottleneck**: bonding curve `await` in for loop = 30×300ms = 9s cycle → restructured to Jupiter batch first
+
+### Config Changes
+- `apps/agent/package.json` — added `@solana/web3.js` dependency
+- `packages/solana/src/index.ts` — reverted (no PublicKey export needed)
+- Daily trade cap: 10 → 50 (`MAX_TRADES_PER_DAY`)
+
+### Deploy Command (Single Line)
+```bash
+ssh root@161.97.173.157 && cd ~/anton-terminal && git pull && pnpm install --no-frozen-lockfile && pnpm --filter "./apps/agent" build && cd apps/dashboard && npx next build && cd ../.. && pm2 restart anton-agent && PORT=4000 pm2 restart anton-dashboard
+```
+
+### Remaining Issues
+- **0ms true real-time**: Not achieved. Requires working Helius `accountSubscribe` for Pump.fun bonding curve, which needs correct byte layout decode + subscription ID fix. Jupiter batch at 800ms is the best we have.
+- **Flickering**: Partially fixed (1% threshold). User wants individual MC cell flash (green/red) instead of full row re-render — cosmetic, not yet implemented.
+- **Entry MC**: Uses DexScreener initial data (can differ from GMGN). On-chain bonding curve correction was attempted but removed due to unreliability for graduated tokens.
+- **Token graduated vs bonding curve**: Can't distinguish — bonding curve decode fails silently for graduated tokens. Jupiter is the reliable fallback.
 ```

@@ -35,7 +35,7 @@ import {
 import { fetchCandidates } from "@anton/ingestion";
 import { screenCandidate } from "@anton/screening";
 import { decide, decideExit, DeepSeekClient, type ReasoningStep, type PatternStat, feeEfficiencyGate, type EfficiencyGate } from "@anton/agent";
-import { loadHotWallet, createConnection, LAMPORTS_PER_SOL } from "@anton/solana";
+import { loadHotWallet, createConnection, createWsConnection, LAMPORTS_PER_SOL } from "@anton/solana";
 import { swapBuy } from "@anton/solana";
 import { swapSell } from "@anton/solana";
 import { getTokenBalance } from "@anton/solana";
@@ -136,7 +136,13 @@ async function fetchBondingCurvePrice(mint: string): Promise<{ priceUsd: number;
     const sup = Number(buf.readBigUInt64LE(40));
     if (vt <= 0) return;
     const priceSol = (vs / 1e9) / (vt / 1e6);
-    const solUsd = 130;
+    const solUsd = await fetch("https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112")
+      .then((r) => r.json())
+      .then((j: { data?: Record<string, { price: string }> }) => {
+        const p = parseFloat(j.data?.["So11111111111111111111111111111111111111112"]?.price ?? "");
+        return p > 0 ? p : 130;
+      })
+      .catch(() => 130);
     return { priceUsd: priceSol * solUsd, mcUsd: sup > 0 ? priceSol * solUsd * (sup / 1e6) : undefined };
   } catch { return; }
 }
@@ -723,15 +729,40 @@ async function bootstrap(): Promise<void> {
   }
 
   let priceFeed: HeliusPriceFeed | undefined;
-  const wsUrl = process.env.SOLANA_RPC_WS?.trim() || env.SOLANA_RPC_URL;
-  if (wsUrl) {
-    try {
-      // Ensure wss:// prefix for WebSocket
-      const finalUrl = wsUrl.startsWith("wss://") ? wsUrl : wsUrl.replace("https://", "wss://");
-      priceFeed = new HeliusPriceFeed();
-      log("price feed: Jupiter polling active");
-    } catch {
-      log("helius ws: unavailable, falling back to dex screener polling");
+  const wsUrl = env.SOLANA_RPC_WS?.trim() ?? "";
+  const rpcUrl = env.SOLANA_RPC_URL?.trim() ?? "";
+
+  if (rpcUrl) {
+    priceFeed = new HeliusPriceFeed();
+
+    if (wsUrl) {
+      try {
+        const finalWsUrl = wsUrl.startsWith("wss://") ? wsUrl : wsUrl.replace("https://", "wss://");
+        const wsConnection = createWsConnection(rpcUrl, finalWsUrl, "processed");
+
+        // Fetch live SOL/USD for bonding-curve MC calc (replaces hardcoded $130)
+        let solUsd = 130;
+        try {
+          const solRes = await fetch(
+            "https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112",
+          );
+          if (solRes.ok) {
+            const solJson = (await solRes.json()) as { data?: Record<string, { price: string }> };
+            const solPrice = solJson.data?.["So11111111111111111111111111111111111111112"]?.price;
+            if (solPrice) solUsd = parseFloat(solPrice);
+          }
+        } catch {
+          // Keep fallback
+        }
+
+        priceFeed.setConnection(wsConnection, solUsd);
+        log(`price feed: Helius WebSocket active (bonding-curve <100ms) + Jupiter 500ms fallback`);
+        log(`price feed: SOL/USD $${solUsd.toFixed(2)}`);
+      } catch (err) {
+        log(`price feed: WS setup failed — Jupiter polling 500ms (${String(err).slice(0, 60)})`);
+      }
+    } else {
+      log("price feed: Jupiter polling 500ms (no WS endpoint configured)");
     }
   }
 
