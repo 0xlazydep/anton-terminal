@@ -279,7 +279,7 @@ export class PositionBook {
     if (this.priceFeed && !this.wsSubMints.has(pos.mint)) {
       this.wsSubMints.add(pos.mint);
       process.stderr.write(`[ws] subscribing ${pos.symbol ?? pos.mint.slice(0,8)}...\n`);
-      const subId = await this.priceFeed.subscribe(pos.mint, (priceUsd, marketCapUsd) => {
+      const subId = await this.priceFeed.subscribe(pos.mint, (priceUsd, marketCapUsd, meta) => {
         const p = this.positions.get(id);
         if (!p) return;
         if (priceUsd > 0) {
@@ -287,10 +287,11 @@ export class PositionBook {
           if (priceUsd > p.peakPriceUsd) p.peakPriceUsd = priceUsd;
           if (p.entryMarketCapUsd && p.entryPriceUsd > 0) {
             p.currentMarketCapUsd = priceUsd * (p.entryMarketCapUsd / p.entryPriceUsd);
-          } else           if (marketCapUsd && marketCapUsd > 0) {
+          } else if (marketCapUsd && marketCapUsd > 0) {
             p.currentMarketCapUsd = marketCapUsd;
           }
         }
+        process.stderr.write(`[ws-upd] ${p.symbol ?? p.mint.slice(0,6)} $${priceUsd?.toExponential(2)} mc=${((p.currentMarketCapUsd ?? 0)/1000).toFixed(0)}K src=${meta?.source ?? "?"}\n`);
         p.lastWsPrice = Date.now();
         const pnl = this.pnlPct(p);
         this.checkExitConditions(p, pnl);
