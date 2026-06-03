@@ -1,87 +1,61 @@
 /**
- * Pump.fun bonding curve price feed via Helius REST.
- * Uses getAccountInfo with jsonParsed + base64 data decoding.
- * Tested against real Pump.fun bonding curve account layout.
+ * Helius getAsset + Jupiter dual-source price feed.
+ * No manual curve decoding. Helius DAS gives price_per_token directly.
  */
-import { PublicKey } from "@solana/web3.js";
-
-const SOL_MINT = "So11111111111111111111111111111111111111112";
-const PUMP_FUN = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
 const INTERVAL = 1500;
 
 interface PriceCallback { (priceUsd: number, marketCapUsd?: number, meta?: { source: string }): void; }
 
 interface ActiveSub {
-  mint: string; pda: string; callback: PriceCallback;
-  lastPrice: number; timer: ReturnType<typeof setInterval> | null;
-  solUsdRef: number; supply?: number;
+  mint: string; callback: PriceCallback; timer: ReturnType<typeof setInterval> | null;
 }
 
 export class HeliusPriceFeed {
   private subs = new Map<string, ActiveSub>();
   private readonly rpcUrl: string;
-  private solUsd = 130;
 
   constructor(wsUrl: string) {
     this.rpcUrl = wsUrl.replace("wss://", "https://");
-    void this.refreshSolUsd();
   }
 
-  private async refreshSolUsd(): Promise<void> {
+  private async fetchHelius(sub: ActiveSub): Promise<void> {
     try {
-      const res = await fetch(`https://api.jup.ag/price/v2?ids=${SOL_MINT}`);
-      if (!res.ok) return;
-      const json = (await res.json()) as { data?: Record<string, { price: string }> };
-      const p = parseFloat(json.data?.[SOL_MINT]?.price ?? "0");
-      if (p > 0) { this.solUsd = p; for (const s of this.subs.values()) s.solUsdRef = p; }
-    } catch {}
-    setTimeout(() => void this.refreshSolUsd(), 30_000);
-  }
-
-  private extractU64(buf: Buffer, offset: number): number {
-    return Number(buf.readBigUInt64LE(offset));
-  }
-
-  private decodeCurve(raw: string): { price: number; supply: number } | undefined {
-    const buf = Buffer.from(raw, "base64");
-    if (buf.length < 48) return;
-    process.stderr.write(`[d] ${buf.slice(0,64).toString("hex")}\n`);
-    const vt = this.extractU64(buf, 8);
-    const vs = this.extractU64(buf, 16);
-    const sup = this.extractU64(buf, 40);
-    process.stderr.write(`[d] vt=${vt} vs=${vs} sup=${sup}\n`);
-    if (vt <= 0) return;
-    const supply = sup / 1e6;
-    const priceSol = (vs / 1e9) / (vt / 1e6);
-    if (priceSol <= 0) return;
-    return { price: priceSol, supply };
-  }
-
-  private async fetchCurve(sub: ActiveSub): Promise<void> {
-    try {
-      const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getAccountInfo", params: [sub.pda, { encoding: "base64" }] });
+      const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getAsset", params: { id: sub.mint } });
       const res = await fetch(this.rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body });
       if (!res.ok) return;
-      const json = (await res.json()) as { result?: { value?: { data?: [string, string] } } };
-      const d = json.result?.value?.data;
+      const json = (await res.json()) as {
+        result?: { token_info?: { price_info?: { price_per_token?: number }, supply?: number } };
+      };
+      const ti = json.result?.token_info;
+      const p = ti?.price_info?.price_per_token;
+      if (!p || p <= 0) return;
+      const mc = ti?.supply ? p * (ti.supply / 1e6) : undefined;
+      sub.callback(p, mc, { source: "helius" });
+    } catch {}
+  }
+
+  private async fetchJup(sub: ActiveSub): Promise<void> {
+    try {
+      const res = await fetch(`https://api.jup.ag/price/v2?ids=${sub.mint}&showExtraInfo=true`);
+      if (!res.ok) return;
+      const json = (await res.json()) as { data?: Record<string, { price: string; extraInfo?: { marketCap?: string } }> };
+      const d = json.data?.[sub.mint];
       if (!d) return;
-      const raw = d[0];
-      if (!raw) return;
-      const c = this.decodeCurve(raw);
-      if (!c) { process.stderr.write(`x`); return; }
-      const priceUsd = c.price * sub.solUsdRef;
-      sub.lastPrice = c.price;
-      if (!sub.supply && c.supply > 0) sub.supply = c.supply;
-      sub.callback(priceUsd, c.price * sub.solUsdRef * (sub.supply ?? 0), { source: "curve" });
-    } catch { process.stderr.write(`E`); }
+      const p = parseFloat(d.price) || 0;
+      if (p <= 0) return;
+      sub.callback(p, d.extraInfo?.marketCap ? parseFloat(d.extraInfo.marketCap) : undefined, { source: "jupiter" });
+    } catch {}
   }
 
   async subscribe(mint: string, callback: PriceCallback): Promise<number> {
-    const [pk] = PublicKey.findProgramAddressSync([Buffer.from("bonding-curve"), new PublicKey(mint).toBuffer()], PUMP_FUN);
-    const sub: ActiveSub = { mint, pda: pk.toBase58(), callback, lastPrice: 0, timer: null, solUsdRef: this.solUsd };
+    const sub: ActiveSub = { mint, callback, timer: null };
     this.subs.set(mint, sub);
-    void this.fetchCurve(sub);
-    sub.timer = setInterval(() => { if (this.subs.has(mint)) void this.fetchCurve(sub); else clearInterval(sub.timer!); }, INTERVAL);
+    void this.fetchHelius(sub);
+    void this.fetchJup(sub);
+    sub.timer = setInterval(() => {
+      if (!this.subs.has(mint)) { clearInterval(sub.timer!); return; }
+      void this.fetchHelius(sub);
+    }, INTERVAL);
     return 0;
   }
 
