@@ -42,7 +42,6 @@ interface SubEntry {
   accountSubId: number | null;
   pollTimer: ReturnType<typeof setInterval> | null;
   pda: PublicKey | null;
-  solUsd: number;
 }
 
 export class RealtimePriceFeed {
@@ -50,10 +49,14 @@ export class RealtimePriceFeed {
   private readonly gmgn: GmgnClient | null;
   private subs = new Map<string, SubEntry>();
   private closed = false;
+  private solUsd = SOL_USD_FALLBACK;
+  private solTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(connection: Connection, gmgnApiKey?: string) {
     this.connection = connection;
     this.gmgn = gmgnApiKey ? new GmgnClient(gmgnApiKey) : null;
+    void this.refreshSolUsd();
+    this.solTimer = setInterval(() => void this.refreshSolUsd(), 30_000);
   }
 
   get isConnected(): boolean {
@@ -69,11 +72,9 @@ export class RealtimePriceFeed {
       accountSubId: null,
       pollTimer: null,
       pda: null,
-      solUsd: SOL_USD_FALLBACK,
     };
     this.subs.set(mint, entry);
 
-    void this.fetchSolUsd(entry);
     void this.poll(entry);
 
     try {
@@ -118,6 +119,7 @@ export class RealtimePriceFeed {
 
   close(): void {
     this.closed = true;
+    if (this.solTimer) clearInterval(this.solTimer);
     for (const [mint] of this.subs) {
       this.unsubscribe(mint);
     }
@@ -131,7 +133,7 @@ export class RealtimePriceFeed {
     if (vt <= 0 || vs <= 0) return;
 
     const priceSol = vs / 1e9 / (vt / 1e6);
-    const priceUsd = priceSol * entry.solUsd;
+    const priceUsd = priceSol * this.solUsd;
     if (priceUsd <= 0) return;
 
     const mcUsd = totalSupply > 0 ? priceUsd * (totalSupply / 1e6) : undefined;
@@ -183,19 +185,23 @@ export class RealtimePriceFeed {
     }
   }
 
-  private async fetchSolUsd(entry: SubEntry): Promise<void> {
+  private async refreshSolUsd(): Promise<void> {
+    const SOL = "So11111111111111111111111111111111111111112";
+    if (this.gmgn) {
+      const g = await this.gmgn.fetchTokenInfo(SOL);
+      if (g && g.priceUsd > 0) {
+        this.solUsd = g.priceUsd;
+        return;
+      }
+    }
     try {
-      const r = await fetch(
-        `${JUPITER_URL}?ids=So11111111111111111111111111111111111111112`,
-      );
+      const r = await fetch(`${JUPITER_URL}?ids=${SOL}`);
       if (!r.ok) return;
       const j = (await r.json()) as { data?: Record<string, { price: string }> };
-      const p = parseFloat(
-        j.data?.["So11111111111111111111111111111111111111112"]?.price ?? "",
-      );
-      if (p > 0) entry.solUsd = p;
+      const p = parseFloat(j.data?.[SOL]?.price ?? "");
+      if (p > 0) this.solUsd = p;
     } catch {
-      // Keep default
+      // Keep last known value
     }
   }
 }
