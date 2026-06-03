@@ -45,9 +45,11 @@ export class HeliusPriceFeed {
   private decodeCurve(raw: string): { price: number; supply: number } | undefined {
     const buf = Buffer.from(raw, "base64");
     if (buf.length < 48) return;
+    process.stderr.write(`[d] ${buf.slice(0,64).toString("hex")}\n`);
     const vt = this.extractU64(buf, 8);
     const vs = this.extractU64(buf, 16);
     const sup = this.extractU64(buf, 40);
+    process.stderr.write(`[d] vt=${vt} vs=${vs} sup=${sup}\n`);
     if (vt <= 0) return;
     const supply = sup / 1e6;
     const priceSol = (vs / 1e9) / (vt / 1e6);
