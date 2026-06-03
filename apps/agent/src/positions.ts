@@ -456,7 +456,6 @@ export class PositionBook {
       if (marketCapUsd && marketCapUsd > 0) pos.currentMarketCapUsd = marketCapUsd;
       else if (pos.entryMarketCapUsd && pos.entryPriceUsd > 0) pos.currentMarketCapUsd = priceUsd * (pos.entryMarketCapUsd / pos.entryPriceUsd);
     }
-    pos.lastWsPrice = Date.now();
     const pnl = this.pnlPct(pos);
     this.checkExitConditions(pos, pnl);
   }

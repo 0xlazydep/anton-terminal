@@ -960,13 +960,16 @@ async function bootstrap(): Promise<void> {
         } catch {}
       }
       // Update active positions from batch poll
+      // Update active positions from batch poll
       for (const pos of book.snapshotState().positions) {
         const info = json.data?.[pos.mint];
-        if (!info) continue;
-        const price = parseFloat(info.price) || 0;
-        if (price <= 0) continue;
-        const mc = info.extraInfo?.marketCap ? parseFloat(info.extraInfo.marketCap) : undefined;
-        book.updateFromPoll(pos.id, price, mc);
+        if (info) {
+          const price = parseFloat(info.price) || 0;
+          if (price > 0) {
+            const mc = info.extraInfo?.marketCap ? parseFloat(info.extraInfo.marketCap) : undefined;
+            book.updateFromPoll(pos.id, price, mc);
+          }
+        }
       }
     } catch {}
   }, 800);
