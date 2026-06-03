@@ -136,13 +136,13 @@ async function fetchBondingCurvePrice(mint: string): Promise<{ priceUsd: number;
     const sup = Number(buf.readBigUInt64LE(40));
     if (vt <= 0) return;
     const priceSol = (vs / 1e9) / (vt / 1e6);
-    const solUsd = await fetch("https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112")
-      .then((r) => r.json())
-      .then((j: { data?: Record<string, { price: string }> }) => {
-        const p = parseFloat(j.data?.["So11111111111111111111111111111111111111112"]?.price ?? "");
-        return p > 0 ? p : 130;
-      })
-      .catch(() => 130);
+    let solUsd = 130;
+    try {
+      const r = await fetch("https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112");
+      const j = (await r.json()) as { data?: Record<string, { price: string }> };
+      const p = parseFloat(j.data?.["So11111111111111111111111111111111111111112"]?.price ?? "");
+      if (p > 0) solUsd = p;
+    } catch { /* keep 130 */ }
     return { priceUsd: priceSol * solUsd, mcUsd: sup > 0 ? priceSol * solUsd * (sup / 1e6) : undefined };
   } catch { return; }
 }
