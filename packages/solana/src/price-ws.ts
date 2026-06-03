@@ -1,28 +1,35 @@
 /**
- * Real-time price feed — pure Helius WebSocket, zero external dependencies.
+ * Real-time price feed — pure Helius WebSocket.
  *
  *   accountSubscribe on pump.fun bonding-curve PDA
- *   → Decodes virtual reserves directly from on-chain account data.
- *   → Sub-100ms, exact on-chain price. Every buy/sell triggers a push.
+ *   → Decodes virtual reserves directly from on-chain account data on every
+ *     buy/sell. Sub-100ms. This is the exact same data GMGN/Axiom read.
  *
  *   Jupiter REST polling at 1000ms
- *   → Fallback safety net for graduated/non-pumpfun tokens.
+ *   → Fallback for graduated/non-pumpfun tokens (no bonding curve PDA).
+ *
+ * Bonding-curve account layout (pump.fun):
+ *   offset  8 → virtualTokenReserves (u64, 6 decimals)
+ *   offset 16 → virtualSolReserves   (u64, 9 decimals / lamports)
+ *   offset 40 → tokenTotalSupply     (u64, 6 decimals)
+ *
+ * priceSol = (virtualSolReserves / 1e9) / (virtualTokenReserves / 1e6)
+ * marketCap = priceUsd * (tokenTotalSupply / 1e6)
  */
 
 import { Connection, PublicKey } from "@solana/web3.js";
-import type { AccountInfo, Context, Logs } from "@solana/web3.js";
+import type { AccountInfo, Context } from "@solana/web3.js";
 
 const PUMP_PROGRAM = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
 const JUPITER_URL = "https://api.jup.ag/price/v2";
 const JUPITER_POLL_MS = 1000;
-const DEBOUNCE_MS = 50;
 const SOL_USD_FALLBACK = 130;
 const BONDING_CURVE_SEED = Buffer.from("bonding-curve");
 
 export interface PriceUpdate {
   priceUsd: number;
   marketCapUsd?: number;
-  source: "ws-bonding-curve" | "ws-logs-trigger" | "jupiter-rest";
+  source: "ws-bonding-curve" | "jupiter-rest";
   receivedAt?: number;
 }
 
@@ -32,9 +39,7 @@ interface SubEntry {
   mint: string;
   callback: PriceCallback;
   accountSubId: number | null;
-  logsSubId: number | null;
   jupiterTimer: ReturnType<typeof setInterval> | null;
-  debounceTimer: ReturnType<typeof setTimeout> | null;
   pda: PublicKey | null;
   solUsd: number;
 }
@@ -59,9 +64,7 @@ export class RealtimePriceFeed {
       mint,
       callback,
       accountSubId: null,
-      logsSubId: null,
       jupiterTimer: null,
-      debounceTimer: null,
       pda: null,
       solUsd: SOL_USD_FALLBACK,
     };
@@ -70,8 +73,6 @@ export class RealtimePriceFeed {
     void this.fetchSolUsd(entry);
     void this.fetchJupiter(entry);
 
-    // accountSubscribe on pump.fun bonding-curve PDA
-    // → every on-chain buy/sell pushes updated virtual reserves
     try {
       const mintPk = new PublicKey(mint);
       const [pda] = PublicKey.findProgramAddressSync(
@@ -84,25 +85,12 @@ export class RealtimePriceFeed {
         (accountInfo: AccountInfo<Buffer>, _ctx: Context) =>
           this.onBondingCurveUpdate(entry, accountInfo.data),
         "processed",
-        );
-        process.stderr.write(`[feed] bonding-curve sub active for ${mint.slice(0, 8)}\n`);
-      } catch {
-        process.stderr.write(`[feed] bonding-curve sub failed for ${mint.slice(0, 8)}\n`);
-      }
+      );
+      process.stderr.write(`[feed] bonding-curve WS active for ${mint.slice(0, 8)}\n`);
+    } catch {
+      process.stderr.write(`[feed] bonding-curve WS failed for ${mint.slice(0, 8)} — Jupiter only\n`);
+    }
 
-      // Layer 2: logsSubscribe with mentions filter — fires on ANY swap on ANY DEX
-      try {
-        entry.logsSubId = this.connection.onLogs(
-          { mentions: [mint] } as any,
-          (_logs: Logs, _ctx: Context) => this.onTradeDetected(entry),
-          "processed",
-        );
-        process.stderr.write(`[feed] logs-sub active for ${mint.slice(0, 8)}\n`);
-      } catch {
-        process.stderr.write(`[feed] logs-sub failed for ${mint.slice(0, 8)}\n`);
-      }
-
-    // Jupiter REST polling at 1s
     entry.jupiterTimer = setInterval(() => {
       if (!this.subs.has(mint)) {
         clearInterval(entry.jupiterTimer!);
@@ -122,11 +110,7 @@ export class RealtimePriceFeed {
     if (entry.accountSubId !== null) {
       this.connection.removeAccountChangeListener(entry.accountSubId).catch(() => {});
     }
-    if (entry.logsSubId !== null) {
-      this.connection.removeOnLogsListener(entry.logsSubId).catch(() => {});
-    }
     if (entry.jupiterTimer) clearInterval(entry.jupiterTimer);
-    if (entry.debounceTimer) clearTimeout(entry.debounceTimer);
   }
 
   close(): void {
@@ -140,12 +124,14 @@ export class RealtimePriceFeed {
     if (data.length < 48) return;
     const vt = Number(data.readBigUInt64LE(8));
     const vs = Number(data.readBigUInt64LE(16));
-    const supply = Number(data.readBigUInt64LE(40));
+    const totalSupply = Number(data.readBigUInt64LE(40));
     if (vt <= 0 || vs <= 0) return;
 
-    const priceSol = vs / vt;
+    const priceSol = vs / 1e9 / (vt / 1e6);
     const priceUsd = priceSol * entry.solUsd;
-    const mcUsd = supply > 0 ? priceSol * entry.solUsd * (supply / 1e6) : undefined;
+    if (priceUsd <= 0) return;
+
+    const mcUsd = totalSupply > 0 ? priceUsd * (totalSupply / 1e6) : undefined;
 
     entry.callback({
       priceUsd,
@@ -155,18 +141,7 @@ export class RealtimePriceFeed {
     });
   }
 
-  private onTradeDetected(entry: SubEntry): void {
-    if (entry.debounceTimer) clearTimeout(entry.debounceTimer);
-    entry.debounceTimer = setTimeout(() => {
-      entry.debounceTimer = null;
-      void this.fetchJupiter(entry, "ws-logs-trigger");
-    }, DEBOUNCE_MS);
-  }
-
-  private async fetchJupiter(
-    entry: SubEntry,
-    source: "jupiter-rest" | "ws-logs-trigger" = "jupiter-rest",
-  ): Promise<void> {
+  private async fetchJupiter(entry: SubEntry): Promise<void> {
     try {
       const r = await fetch(`${JUPITER_URL}?ids=${entry.mint}&showExtraInfo=true`);
       if (!r.ok) return;
@@ -180,7 +155,7 @@ export class RealtimePriceFeed {
       entry.callback({
         priceUsd: p,
         marketCapUsd: d.extraInfo?.marketCap ? parseFloat(d.extraInfo.marketCap) : undefined,
-        source,
+        source: "jupiter-rest",
         receivedAt: Date.now(),
       });
     } catch {
@@ -206,7 +181,7 @@ export class RealtimePriceFeed {
 }
 
 /**
- * Backward-compatible wrapper.
+ * Backward-compatible wrapper around the legacy callback signature.
  */
 export class HeliusPriceFeed {
   private feed: RealtimePriceFeed | null = null;
