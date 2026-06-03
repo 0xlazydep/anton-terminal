@@ -203,24 +203,31 @@ export class HeliusPriceFeed {
     const meta = tx.meta as Record<string, unknown> | undefined;
     if (!meta) return;
 
-    const pre = (meta.preTokenBalances as Array<Record<string, unknown>>) ?? [];
-    const post = (meta.postTokenBalances as Array<Record<string, unknown>>) ?? [];
-
     let solDelta = 0;
     let tokenDelta = 0;
 
-    for (const b of post) {
+    const preTokens = (meta.preTokenBalances as Array<Record<string, unknown>>) ?? [];
+    const postTokens = (meta.postTokenBalances as Array<Record<string, unknown>>) ?? [];
+
+    for (const b of postTokens) {
       const bMint = b.mint as string;
       const amt = (b.uiTokenAmount as { uiAmount: number })?.uiAmount ?? 0;
-      const preBal = pre.find(
+      const preT = preTokens.find(
         (p) =>
           (p.mint as string) === bMint &&
           (p.accountIndex as number) === (b.accountIndex as number),
       );
-      const preAmt = preBal ? (preBal.uiTokenAmount as { uiAmount: number })?.uiAmount ?? 0 : 0;
+      const preAmt = preT ? (preT.uiTokenAmount as { uiAmount: number })?.uiAmount ?? 0 : 0;
       const delta = amt - preAmt;
       if (bMint === SOL_MINT) solDelta += delta;
       else if (bMint === mint) tokenDelta += delta;
+    }
+
+    const preLamports = (meta.preBalances as number[]) ?? [];
+    const postLamports = (meta.postBalances as number[]) ?? [];
+    if (preLamports.length > 0 && postLamports.length > 0 && solDelta === 0) {
+      const feePayerDelta = (postLamports[0] ?? 0) - (preLamports[0] ?? 0);
+      solDelta = -feePayerDelta / 1e9;
     }
 
     if (solDelta === 0 || tokenDelta === 0) return;
