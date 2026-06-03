@@ -68,6 +68,7 @@ export class HeliusPriceFeed {
 
       this.ws.onopen = () => {
         this.connected = true;
+        process.stderr.write("[ws] connected\n");
         for (const sub of this.subs.values()) {
           this.subscribeCurve(sub);
           this.subscribeLogs(sub);
@@ -76,12 +77,13 @@ export class HeliusPriceFeed {
 
       this.ws.onmessage = (event: MessageEvent) => {
         const raw = event.data as string | undefined;
+        process.stderr.write(`[ws-raw] t=${typeof raw} len=${typeof raw === "string" ? raw.length : 0} head=${typeof raw === "string" ? raw.slice(0, 30) : "?"} data=${JSON.stringify(raw)}\n`);
         if (typeof raw !== "string" || (!raw.startsWith("{") && !raw.startsWith("["))) return;
         try { this.route(JSON.parse(raw)); } catch {}
       };
 
-      this.ws.onclose = () => { this.connected = false; this.scheduleReconnect(); };
-      this.ws.onerror = () => {};
+      this.ws.onclose = () => { this.connected = false; process.stderr.write("[ws] closed\n"); this.scheduleReconnect(); };
+      this.ws.onerror = () => { process.stderr.write("[ws] error\n"); };
     } catch { this.scheduleReconnect(); }
   }
 
