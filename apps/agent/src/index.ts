@@ -107,6 +107,7 @@ const recentlyClosedMints = new Map<string, { closedAt: number; wasProfit: boole
 const watchlistCounts = new Map<string, { count: number; symbol?: string; liquidityUsd?: number; pairAgeSec?: number; score: number; momentum: number }>();
 const peakMomentum = new Map<string, number>(); // mint → highest momentum seen across cycles
 const recentScreened = new Map<string, { symbol?: string; score: number; verdict: string; flags: string[]; liquidityUsd?: number; pairAgeSec?: number; source?: string; llmAction?: "BUY" | "SKIP" }>();
+const lastPublishedMc = new Map<string, number>();
 let db: Database | undefined;
 let walletIntel: WalletIntel | undefined;
 
@@ -962,7 +963,11 @@ async function bootstrap(): Promise<void> {
         if (!row) continue;
         const curve = await fetchBondingCurvePrice(mint);
         if (curve && curve.priceUsd > 0) {
+          const mc = curve.mcUsd ?? 0;
+          const last = lastPublishedMc.get(mint) ?? 0;
           found.add(mint);
+          if (last > 0 && Math.abs(mc - last) / last < 0.01) continue;
+          lastPublishedMc.set(mint, mc);
           publishScreening(bus, {
             mint, symbol: row.symbol, score: row.score, verdict: row.verdict as any,
             flags: row.flags, liquidityUsd: row.liquidityUsd, marketCapUsd: curve.mcUsd, pairAgeSec: row.pairAgeSec,
@@ -987,6 +992,12 @@ async function bootstrap(): Promise<void> {
               const price = parseFloat(info.price) || 0;
               if (price <= 0) continue;
               const mc = info.extraInfo?.marketCap ? parseFloat(info.extraInfo.marketCap) : undefined;
+              if (mc) {
+                const last = lastPublishedMc.get(mint) ?? 0;
+                if (last > 0 && Math.abs(mc - last) / last < 0.01) { found.add(mint); continue; }
+                lastPublishedMc.set(mint, mc);
+              }
+              found.add(mint);
               publishScreening(bus, {
                 mint, symbol: row.symbol, score: row.score, verdict: row.verdict as any,
                 flags: row.flags, liquidityUsd: row.liquidityUsd, marketCapUsd: mc, pairAgeSec: row.pairAgeSec,
@@ -1006,6 +1017,9 @@ async function bootstrap(): Promise<void> {
           const { fetchTokenMarket } = await import("@anton/ingestion");
           const snap = await fetchTokenMarket(mint);
           if (snap.marketCapUsd && snap.marketCapUsd > 0) {
+            const last = lastPublishedMc.get(mint) ?? 0;
+            if (last > 0 && Math.abs(snap.marketCapUsd - last) / last < 0.01) continue;
+            lastPublishedMc.set(mint, snap.marketCapUsd);
             publishScreening(bus, {
               mint, symbol: row.symbol, score: row.score, verdict: row.verdict as any,
               flags: row.flags, liquidityUsd: snap.liquidityUsd ?? row.liquidityUsd,
