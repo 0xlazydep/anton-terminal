@@ -73,7 +73,7 @@ const config: TradingConfig = parseTradingConfig({
   maxSpendSol: Number(process.env.ANTON_MAX_SPEND_SOL ?? 0.15),
 });
 
-const MAX_TRADES_PER_DAY = 10;
+const MAX_TRADES_PER_DAY = 50;
 let tradesToday = 0;
 let tradeDayReset = Date.now();
 
