@@ -19,11 +19,9 @@
   "dependencies": {
     "@anton/shared-types": "workspace:*",
     "@solana/web3.js": "^1.95.8",
-    "bs58": "^6.0.0",
-    "ws": "^8.21.0"
+    "bs58": "^6.0.0"
   },
   "devDependencies": {
-    "@types/ws": "^8.18.1",
     "rimraf": "^6.0.1",
     "typescript": "^5.7.2"
   }
