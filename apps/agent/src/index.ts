@@ -682,8 +682,8 @@ async function bootstrap(): Promise<void> {
     try {
       // Ensure wss:// prefix for WebSocket
       const finalUrl = wsUrl.startsWith("wss://") ? wsUrl : wsUrl.replace("https://", "wss://");
-      priceFeed = new HeliusPriceFeed(finalUrl);
-      log("helius ws: real-time price feed active");
+      priceFeed = new HeliusPriceFeed();
+      log("price feed: Jupiter polling active");
     } catch {
       log("helius ws: unavailable, falling back to dex screener polling");
     }
