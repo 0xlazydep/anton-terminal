@@ -118,7 +118,9 @@ async function fetchBondingCurvePrice(mint: string): Promise<{ priceUsd: number;
       [Buffer.from("bonding-curve"), new PublicKey(mint).toBuffer()],
       PUMP,
     );
-    const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY ?? ""}`, {
+    const rpcUrl = env.SOLANA_RPC_URL;
+    if (!rpcUrl) return;
+    const res = await fetch(rpcUrl, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getAccountInfo", params: [pda.toBase58(), { encoding: "base64" }] }),
     });
