@@ -1009,8 +1009,9 @@ async function bootstrap(): Promise<void> {
 
       // Pass 3: Update positions from same Jupiter batch data
       for (const pos of book.snapshotState().positions) {
-        if (info) {
-          const price = parseFloat(info.price) || 0;
+        const jupInfo = jupData?.[pos.mint];
+        if (jupInfo) {
+          const price = parseFloat(jupInfo.price) || 0;
           if (price > 0) {
             const mc = jupInfo.extraInfo?.marketCap ? parseFloat(jupInfo.extraInfo.marketCap) : undefined;
             book.updateFromPoll(pos.id, price, mc);
