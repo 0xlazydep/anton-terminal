@@ -66,12 +66,12 @@ export class HeliusPriceFeed {
       const raw = d[0];
       if (!raw) return;
       const c = this.decodeCurve(raw);
-      if (!c) return;
+      if (!c) { process.stderr.write(`x`); return; }
       const priceUsd = c.price * sub.solUsdRef;
       sub.lastPrice = c.price;
       if (!sub.supply && c.supply > 0) sub.supply = c.supply;
       sub.callback(priceUsd, c.price * sub.solUsdRef * (sub.supply ?? 0), { source: "curve" });
-    } catch {}
+    } catch { process.stderr.write(`E`); }
   }
 
   async subscribe(mint: string, callback: PriceCallback): Promise<number> {
