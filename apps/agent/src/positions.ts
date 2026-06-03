@@ -441,6 +441,11 @@ export class PositionBook {
    * need to reconcile the PositionBook with reality.
    */
   async forceClose(id: string, pnlPct: number, reason: string): Promise<boolean> {
+    const pos = this.positions.get(id);
+    if (!pos) return false;
+    this.finalizeClose(pos, pnlPct, reason);
+    return true;
+  }
 
   updateFromPoll(id: string, priceUsd: number, marketCapUsd?: number): void {
     const pos = this.positions.get(id);
@@ -454,11 +459,6 @@ export class PositionBook {
     pos.lastWsPrice = Date.now();
     const pnl = this.pnlPct(pos);
     this.checkExitConditions(pos, pnl);
-  }
-    const pos = this.positions.get(id);
-    if (!pos) return false;
-    this.finalizeClose(pos, pnlPct, reason);
-    return true;
   }
 
   /** Public exit with swap execution — used for LLM-driven and external exit decisions. */
