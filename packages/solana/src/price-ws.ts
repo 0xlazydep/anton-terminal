@@ -78,25 +78,25 @@ export class HeliusPriceFeed {
         headers: { "Content-Type": "application/json" },
         body,
       });
-      if (!res.ok) { process.stdout.write(`[curve] ${sub.mint.slice(0,8)} HTTP ${res.status}\n`); return; }
+      if (!res.ok) { process.stderr.write(`[curve] ${sub.mint.slice(0,8)} HTTP ${res.status}\n`); return; }
       const json = (await res.json()) as {
         result?: { value?: { data?: [string, string] } };
       };
       const data = json.result?.value?.data;
-      if (!data) { process.stdout.write(`[curve] ${sub.mint.slice(0,8)} no account data (PDA=${sub.pda.slice(0,12)}...)\n`); return; }
+      if (!data) { process.stderr.write(`[curve] ${sub.mint.slice(0,8)} no account data (PDA=${sub.pda.slice(0,12)}...)\n`); return; }
       const raw = Array.isArray(data) ? data[0] : data;
       if (!raw) return;
 
       const curve = this.decodeCurve(raw);
-      if (!curve || curve.price <= 0) { process.stdout.write(`[curve] ${sub.mint.slice(0,8)} decode fail len=${raw.length}\n`); return; }
+      if (!curve || curve.price <= 0) { process.stderr.write(`[curve] ${sub.mint.slice(0,8)} decode fail len=${raw.length}\n`); return; }
 
       const priceUsd = curve.price * sub.solUsdRef;
       sub.lastPrice = curve.price;
       if (curve.supply > 0 && !sub.supply) sub.supply = curve.supply;
       const mc = sub.supply ? curve.price * sub.solUsdRef * sub.supply : undefined;
-      process.stdout.write(`[curve] ${sub.mint.slice(0,8)} $${priceUsd?.toExponential(3)} mc=${mc ? (mc/1000).toFixed(1)+"K" : "?"}\n`);
+      process.stderr.write(`[curve] ${sub.mint.slice(0,8)} $${priceUsd?.toExponential(3)} mc=${mc ? (mc/1000).toFixed(1)+"K" : "?"}\n`);
       sub.callback(priceUsd, mc, { source: "curve" });
-    } catch(err) { process.stdout.write(`[curve] ${sub.mint.slice(0,8)} error ${String(err).slice(0,60)}\n`); }
+    } catch(err) { process.stderr.write(`[curve] ${sub.mint.slice(0,8)} error ${String(err).slice(0,60)}\n`); }
   }
 
   private async fetchJup(sub: ActiveSub): Promise<void> {
@@ -124,7 +124,7 @@ export class HeliusPriceFeed {
       );
       pda = pk.toBase58();
     } catch(err) {
-      process.stdout.write(`[curve] PDA fail for ${mint.slice(0,8)}: ${String(err).slice(0,40)}\n`);
+      process.stderr.write(`[curve] PDA fail for ${mint.slice(0,8)}: ${String(err).slice(0,40)}\n`);
       return 0;
     }
     const sub: ActiveSub = {
@@ -133,7 +133,7 @@ export class HeliusPriceFeed {
     };
     this.subs.set(mint, sub);
 
-    process.stdout.write(`[curve] sub ${mint.slice(0,8)} pda=${pda.slice(0,16)}... rpc=${this.rpcUrl.slice(0,40)}...\n`);
+    process.stderr.write(`[curve] sub ${mint.slice(0,8)} pda=${pda.slice(0,16)}... rpc=${this.rpcUrl.slice(0,40)}...\n`);
     void this.fetchCurve(sub);
     void this.fetchJup(sub);
 
